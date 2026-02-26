@@ -1,6 +1,6 @@
 # Gem Code CLI Agent
 
-一个轻量级、可扩展的 CLI Agent，提供与 AI 模型的交互式对话能力，支持工具调用和流式响应。
+一个轻量级、可扩展的 CLI Agent，基于 OpenAI 兼容 API 提供交互式对话能力，支持工具调用、技能扩展和流式响应。
 
 ## 特性
 
@@ -59,7 +59,7 @@ uv run python main.py
 ```
 ╔══════════════════════════════════════╗
 ║     Gem Code CLI Agent v1.0.0        ║
-║     按 Ctrl+C 或输入 exit 退出        ║
+║     输入 exit 或按 Ctrl+C 退出        ║
 ╚══════════════════════════════════════╝
 
 ➜ 你的问题或指令
@@ -177,6 +177,10 @@ uv run pytest
 - **API 客户端**: OpenAI Python SDK
 - **终端输出**: Rich
 - **测试**: pytest
+
+## 安全提示
+
+⚠️ **重要**：请勿将包含真实 API 密钥的 `.env` 文件提交到版本控制。请确保 `.env` 已在 `.gitignore` 中。
 
 ## 许可证
 

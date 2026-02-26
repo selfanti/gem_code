@@ -1,7 +1,7 @@
 [project]
 name = "gem-code"
 version = "0.1.0"
-description = "Add your description here"
+description = "A lightweight CLI Agent with interactive chat, tool calling, and skill extensions"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

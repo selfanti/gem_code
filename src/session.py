@@ -40,6 +40,7 @@ class Session:
         self.model: str = config.model
         self.skills:list[Skill]=[]
         self._init_task=asyncio.create_task(self._initialize_system_prompt(config.skills_dir))
+        
     async def _initialize_system_prompt(self,skills_dir:Optional[str]):
         system_prompt=get_system_prompt()
         if skills_dir:
