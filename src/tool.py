@@ -128,7 +128,7 @@ async def run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
             return formatted_tool_output(output)
         elif name == "read_file":
             path = args.get("path", "")
-            output=await run_read_file(path)
+            output=await run_read_file(path,workdir)
             return formatted_tool_output(output)
         elif name == "write_file":
             path = args.get("path", "")
