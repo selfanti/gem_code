@@ -5,9 +5,10 @@ from rich.console import Console
 import asyncio
 from session import Session
 from decorate import pc_gray,pc_blue,pc_cyan,pc_magenta
+import readline
 console=Console()
 async def async_input(prompt: str = "") -> str:
-    return await asyncio.to_thread(input, prompt)
+    return input(prompt)
 def onChunk(chunk:str):
     console.print(pc_blue(chunk), end="")
 async def main():

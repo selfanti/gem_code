@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from typing import Optional,List
+from glob import glob
 @dataclass
 class Skill:
     name:str
@@ -9,13 +10,14 @@ class Skill:
 
 async def load_skills(skills_dir:str) -> List[Skill]:
     skills=[]
+    skills_dir=os.path.expanduser(skills_dir)
     if  not os.path.isdir(skills_dir):
         print(f"Skills directory '{skills_dir}' does not exist or is not a directory.")
         return skills
     
-    entries=os.listdir(skills_dir)
+    entries=os.listdir(os.path.join(skills_dir,"skills"))
     for entry in entries:
-        path=os.path.join(skills_dir,entry,"SKILL.md")
+        path = os.path.join(skills_dir,"skills", entry, "SKILL.md")
         try:
             with open(path,'r',encoding='utf-8') as f:
                 content=f.read()
@@ -47,7 +49,7 @@ def format_skill_for_prompt(skills:List[Skill])->str:
 {s.content}
 """, skills))
     return f"""
-你是Gem Code CLI，拥有以下专业技能：
+你是Gem Code CLI，拥有以下skill：
 {sections}
 
 使用说明：当用户请求与某个 skill 相关时，请参考对应的 SKILL.md 内容来指导你的回答,不要描述你要调用哪个技能。

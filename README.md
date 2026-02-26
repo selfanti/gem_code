@@ -44,12 +44,6 @@ SKILLS_DIR=/path/to/skills  # 可选
 uv run python src/cli.py
 ```
 
-或者直接运行主程序：
-
-```bash
-uv run python main.py
-```
-
 ## 使用方法
 
 ### 交互模式
