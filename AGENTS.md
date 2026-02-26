@@ -50,7 +50,7 @@ Copy `.env_example` to `.env` and fill in your values.
 OPENAI_API_KEY=sk-...
 OPENAI_BASE_URL=https://api.minimaxi.com/v1
 OPENAI_MODEL=MiniMax-M2.5
-WORKDIR=~/gem_code
+WORKDIR=/gem_code
 ```
 
 ## Build and Run Commands

@@ -1,10 +1,7 @@
-import openai
 from config import Config,load_config
-import os
 import sys
 from rich import print
 from rich.console import Console
-from rich.table import Table
 import asyncio
 from session import Session
 from decorate import pc_gray,pc_blue,pc_cyan,pc_magenta
@@ -34,7 +31,7 @@ async def main():
         console.print()
     while True:
         try:
-            user_input = await async_input(pc_magenta("➜ "))
+            user_input = await async_input(("➜ "))
             if not user_input or user_input.lower()=="exit":
                 if user_input:
                     console.print(pc_gray("Exiting..."))

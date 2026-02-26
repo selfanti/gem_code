@@ -69,8 +69,7 @@ SYSTEM_PROMPT="""
 - 遇到错误时，修复后重试
 """
 def get_system_prompt() -> str:
-    return SYSTEM_PROMPT.replace('{workdir}',os.getcwd())   
-print(get_system_prompt())
+    return SYSTEM_PROMPT.replace('{workdir}',os.getcwd())
 
 Role = Literal["system", "user", "assistant", "tool"]
 @dataclass
@@ -81,13 +80,13 @@ class Message:
     tool_call_id: Optional[str] = None # 可选，默认 None
 
 @dataclass
-class function_call:
+class FunctionCall:
     name:str
     arguments:str
 @dataclass
 class ToolCall:
     id:str
-    function:function_call
+    function:FunctionCall
     type:str="function"
 def createOpenAIClient(api_key:str, base_url:str) -> AsyncOpenAI:
     return AsyncOpenAI(api_key=api_key, base_url=base_url)

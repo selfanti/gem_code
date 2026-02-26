@@ -46,7 +46,7 @@ def format_skill_for_prompt(skills:List[Skill])->str:
 详细说明：
 {s.content}
 """, skills))
-    return """
+    return f"""
 你是Gem Code CLI，拥有以下专业技能：
 {sections}
 

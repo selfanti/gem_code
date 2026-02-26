@@ -3,13 +3,33 @@ from tool import TOOLS,run_tool,parseToolArguments
 from skill import Skill,load_skills,format_skill_for_prompt
 from openai import AsyncOpenAI
 from config import get_system_prompt
-from typing import Callable, Optional,Dict
+from typing import Callable, Optional,Dict,Any
 import asyncio
 from rich import print
 from rich.console import Console
 from rich.table import Table
 from decorate import pc_gray,pc_blue,pc_cyan,pc_magenta
 console=Console()
+
+def _message_to_dict(m: Message) -> Dict[str, Any]:
+    """Convert Message to API-compatible dict format"""
+    msg: Dict[str, Any] = {"role": m.role, "content": m.content}
+    if m.tool_calls:
+        # Convert ToolCall dataclass objects to dicts
+        msg["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": tc.type,
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments
+                }
+            }
+            for tc in m.tool_calls
+        ]
+    if m.tool_call_id:
+        msg["tool_call_id"] = m.tool_call_id
+    return msg
 
 class Session:
     def __init__(self, config: Config):
@@ -26,7 +46,7 @@ class Session:
             self.skills = await load_skills(skills_dir)
             skills_prompt = format_skill_for_prompt(self.skills)
             if skills_prompt:
-                   system_prompt += "\n\n" + skills_prompt
+                system_prompt += "\n\n" + skills_prompt
             
             self.history = [Message(role="system", content=system_prompt)]
     async def init(self):
@@ -38,7 +58,7 @@ class Session:
             console.print(pc_gray("🤖 Thinking...")) 
             stream =await self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": m.role, "content": m.content} for m in self.history], # type: ignore
+                messages=[_message_to_dict(m) for m in self.history], # type: ignore
                 #extra_body={"reasoning_split": True},
                 stream=True,
                 tools=TOOLS,# type: ignore
@@ -69,8 +89,8 @@ class Session:
                                 )
                         elif (tc.function.arguments):
                             entries=list(tool_calls_map.values())
-                            if(len(entries)>0):
-                                lastentry=entries[len(entries)-1]
+                            if len(entries) > 0:
+                                lastentry = entries[-1]
                                 lastentry.function.arguments += tc.function.arguments
             message=Message(role="assistant", content=full_content, tool_calls=list(tool_calls_map.values()) if has_tool_calls else None)
             self.history.append(message)
@@ -86,6 +106,7 @@ class Session:
 
                 console.print(pc_magenta("🔄 REPEAT"))
                 continue
+            break
     def get_history(self)->list[Message]:
         return self.history
     

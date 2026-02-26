@@ -3,6 +3,7 @@ from rich.console import Console
 from config import ToolCall
 import openai
 import json
+import os
 console=Console()
 import subprocess
 TOOLS: Final[List[Dict[str, Any]]] = [
@@ -131,7 +132,8 @@ async def run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
             return formatted_tool_output(output)
         elif name == "write_file":
             path = args.get("path", "")
-            output = args.get("content", "")
+            content = args.get("content", "")
+            output = await run_write_file(path, content, workdir)
             return formatted_tool_output(output)
         elif name == "StrReplaceFile":
             path = args.get("path", "")
@@ -144,23 +146,25 @@ async def run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
         return f"Error executing tool {name}: {str(e)}"
 
 async def run_bash(command: str, workdir: str) -> str:
-    # Placeholder for actual bash execution logic
+    # Execute shell command in the specified working directory
     result = subprocess.run(
-    [command, workdir], 
-    capture_output=True, 
-    text=True,  # 自动解码为字符串（Python 3.7+）
-    encoding="utf-8"
-)
+        command,
+        shell=True,
+        cwd=os.path.expanduser(workdir),
+        capture_output=True,
+        text=True,
+        encoding="utf-8"
+    )
     return result.stdout if result.stdout else (result.stderr if result.stderr else "(empty output)")
-async def run_read_file(path: str) -> str:
-    # Placeholder for actual file reading logic
+async def run_read_file(path: str,workdir:str) -> str:
+    path=os.path.join(os.path.expanduser(workdir), path)
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
         return f"Error reading file {path}: {str(e)}"
 async def run_write_file(path: str, content: str, workdir: str) -> str:
-    # Placeholder for actual file writing logic
+    path=os.path.join(os.path.expanduser(workdir), path)
     try:
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
@@ -168,7 +172,7 @@ async def run_write_file(path: str, content: str, workdir: str) -> str:
     except Exception as e:
         return f"Error writing to file {path}: {str(e)}"
 async def run_str_replace_file(path: str, edits: List[Dict[str, str]], workdir: str) -> str:
-    # Placeholder for actual string replacement logic
+    path=os.path.join(os.path.expanduser(workdir), path)
     try:
         with open(path, 'r', encoding='utf-8') as f:
             content = f.read()
