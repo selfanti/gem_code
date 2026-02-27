@@ -85,6 +85,7 @@ Agent 可以自动调用以下工具：
 | `read_file` | 读取文件内容 | `path`, `description` |
 | `write_file` | 写入文件内容 | `path`, `content`, `description` |
 | `StrReplaceFile` | 基于字符串匹配替换文件内容 | `path`, `edits` |
+| `fetch_url` | 获取 URL 内容并转换为 Markdown | `url`, `description` |
 
 工具输出会自动截断（超过 32000 字符时保留头部和尾部）。
 
