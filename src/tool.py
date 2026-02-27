@@ -107,10 +107,10 @@ TOOLS: Final[List[Dict[str, Any]]] = [
                     },
                     "description":{
                         "type": "string",
-                        "description": "Brief description of why do you replace thhe content of this file"
+                        "description": "Brief description of why do you replace the content of this file"
                     }
                 },
-                "required":["path","edits"]
+                "required":["path","edits","description"]
             }
         }
     },

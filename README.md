@@ -251,7 +251,11 @@ uv run pytest
 - **API 客户端**: OpenAI Python SDK
 - **终端输出**: Rich
 - **测试**: pytest
-
+## TODO
+- [ ] 分离显示大模型思考内容和输出内容
+- [ ] 上下文压缩
+- [ ] OpenAI API response适配
+- [ ] 适配mcp
 ## 安全提示
 
 ⚠️ **重要**：
