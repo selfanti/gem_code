@@ -4,6 +4,7 @@ from config import ToolCall
 import openai
 import json
 import os
+from trafilatura import fetch_url,extract
 console=Console()
 import subprocess
 TOOLS: Final[List[Dict[str, Any]]] = [
@@ -103,9 +104,34 @@ TOOLS: Final[List[Dict[str, Any]]] = [
                             },
                             "required":["target","replacement"]
                         }
+                    },
+                    "description":{
+                        "type": "string",
+                        "description": "Brief description of why do you replace thhe content of this file"
                     }
                 },
                 "required":["path","edits"]
+            }
+        }
+    },
+    {
+        "type":"function",
+        "function":{
+            "name":"fetch_url",
+            "description":"Fetch content of the url, output is Markdown format",
+            "parameters":{
+                "type":"object",
+                "properties":{
+                    "url":{
+                        "type":"string",
+                        "description":"The url to fetch content"
+                    },
+                    "description":{
+                        "type": "string",
+                        "description": "Brief description of what do you get about the content of this url"
+                    }
+                },
+                "required":["url","description"]
             }
         }
     }
@@ -115,7 +141,7 @@ async def run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
     Execute a tool call (async)
     
     Args:
-        name: Tool name ("bash", "read_file", "write_file", "StrReplaceFile")
+        name: Tool name ("bash", "read_file", "write_file", "StrReplaceFile,"fetch_url"")
         args: Argument dictionary
         workdir: Working directory
     Returns:
@@ -139,6 +165,10 @@ async def run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
             path = args.get("path", "")
             edits = args.get("edits", [])
             output=await run_str_replace_file(path, edits, workdir)
+            return formatted_tool_output(output)
+        elif name == "fetch_url":
+            url=args.get("url","")
+            output=await run_fetch_url_to_markdown(url)
             return formatted_tool_output(output)
         else:
             return f"Error: Unknown tool: {name}"
@@ -185,7 +215,13 @@ async def run_str_replace_file(path: str, edits: List[Dict[str, str]], workdir: 
         return f"Successfully performed string replacements in {path}"
     except Exception as e:
         return f"Error performing string replacements in file {path}: {str(e)}"
-
+async def run_fetch_url_to_markdown(url:str)->str:
+    try:
+        downloaded=fetch_url(url)
+        result = extract(downloaded,output_format="markdown",include_comments=False)
+        return result if result else ""
+    except Exception as e:
+        return f"Failed to fetch the url {url}: {str(e)}"
 OUTPUT_TRUNCATE_LENGTH: Final[int] = 32000
 def formatted_tool_output(output: str) -> str:
     # 1. 清理尾部空白（学习 TS 版本）

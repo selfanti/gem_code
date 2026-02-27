@@ -48,7 +48,6 @@ class Session:
             skills_prompt = format_skill_for_prompt(self.skills)
             if skills_prompt:
                 system_prompt += "\n\n" + skills_prompt
-            print(system_prompt)
             self.history = [Message(role="system", content=system_prompt)]
     async def init(self):
         await self._init_task
