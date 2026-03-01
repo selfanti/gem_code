@@ -10,8 +10,10 @@
 - 💬 **流式响应**：实时显示 AI 回复
 - 🔄 **自动工具循环**：工具执行后自动继续对话，直到获得最终答案
 - 🖥️ **TUI 界面**：基于 Textual 的现代化终端用户界面，性能优化（RichLog 流式渲染 + 批量更新）
+- 📝 **多行输入**：支持多行文本编辑，自动调整高度（3-10 行）
 - 🎨 **终端美化**：使用 Rich 库提供彩色、格式化的终端输出
 - 📜 **历史记录**：维护对话上下文，支持多轮交互
+- 🗑️ **一键清屏**：Clear 按钮快速清空输入和聊天记录
 
 ## 快速开始
 
@@ -73,8 +75,8 @@ uv run python main.py --tui
 │ FILES              │                                    │
 │ ▼ 📁 gem_code      │  🤔 Thinking...                    │
 │   📄 main.py       │                                    │
-│   📄 pyproject...  │  [Send a message...] [Send] [Clear]│
-│   📁 src           │                                    │
+│   📄 pyproject...  │  ┌─────────────────┐ [Send ⏎]     │
+│   📁 src           │  │ 多行输入框...    │ [Clear]      │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -97,6 +99,10 @@ uv run python main.py --tui
 | `?` | 显示帮助 |
 | `Escape` | 取消/聚焦输入框 |
 | `Tab` | 插入缩进 |
+
+**按钮操作**：
+- **Send ⏎**：发送当前输入的消息（等同于 `Ctrl+Enter`）
+- **Clear**：清空当前输入框内容和聊天记录历史（等同于 `Ctrl+L`）
 
 #### CLI 模式
 
@@ -128,6 +134,15 @@ uv run python main.py "你的问题"
 ```
 
 输入 `exit` 或按 `Ctrl+C` 退出程序。
+
+### 多行输入
+
+TUI 模式使用 `TextArea` 组件作为输入框：
+
+- **自动高度调整**：根据内容自动调整高度（3-10 行）
+- **多行编辑**：直接按 `Enter` 插入换行符
+- **发送消息**：按 `Ctrl+Enter` 发送
+- **Tab 缩进**：支持 `Tab` 键插入缩进（适合代码输入）
 
 ### 支持的工具
 
@@ -211,7 +226,7 @@ gem-code/
 | **ChatArea** | 滚动聊天记录区域，管理消息生命周期 |
 | **ChatMessageWidget** | 已完成消息的 Markdown 渲染显示 |
 | **OptimizedStreamingWidget** | 高性能流式消息组件（RichLog + Markdown 转换） |
-| **InputArea** | 输入框和操作按钮（Send / Clear） |
+| **InputArea** | 多行文本输入框（TextArea），支持自动高度调整，Send/Clear 按钮 |
 | **Sidebar** | 侧边栏显示模型信息、工作目录、可展开的文件树 |
 | **StatusBar** | 底部状态栏，显示模型名称和当前状态 |
 | **ThinkingIndicator** | 思考动画指示器 |
@@ -360,6 +375,15 @@ uv run python main.py
 ```bash
 WORKDIR=~/your-project  # 会自动展开为 /home/user/your-project
 ```
+
+### Clear 按钮功能
+
+Clear 按钮会同时执行以下操作：
+1. 清空输入框中的当前内容
+2. 清空聊天记录历史
+3. 重置对话上下文
+
+注意：此操作不可撤销，请确认后再点击。
 
 ### 流式响应卡顿
 
