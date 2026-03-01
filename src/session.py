@@ -63,6 +63,7 @@ class Session:
                 stream=True,
                 tools=TOOLS,# type: ignore
                 tool_choice="auto",
+                max_tokens=1024*32
             )  # type: ignore
             has_tool_calls = False
             full_content = ""

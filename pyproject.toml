@@ -8,5 +8,6 @@ dependencies = [
     "openai>=2.21.0",
     "pytest>=9.0.2",
     "rich>=14.3.3",
+    "textual>=8.0.0",
     "trafilatura>=2.0.0",
 ]
