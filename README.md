@@ -9,6 +9,7 @@
 - 📁 **技能扩展**：支持通过 SKILL.md 文件扩展专业能力
 - 💬 **流式响应**：实时显示 AI 回复
 - 🔄 **自动工具循环**：工具执行后自动继续对话，直到获得最终答案
+- 🖥️ **TUI 界面**：基于 Textual 的现代化终端用户界面（类似 OpenCode）
 - 🎨 **终端美化**：使用 Rich 库提供彩色、格式化的终端输出
 - 📜 **历史记录**：维护对话上下文，支持多轮交互
 
@@ -48,14 +49,66 @@ export $(cat .env | xargs)
 
 ### 3. 运行
 
+#### TUI 模式（推荐）
+
+启动现代化终端界面：
+
 ```bash
-uv run python src/cli.py
+uv run python main.py
+# 或
+uv run python main.py --tui
 ```
 
-或直接从命令行传入问题：
+界面布局：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ ⚡ Gem Code        │  🤖 GEM                    14:32:23 │
+│ ─────────────────  │  ───────────────────────────────── │
+│ MODEL              │  Hello! How can I help you today?  │
+│   Name: MiniMax... │                                    │
+│   API: api.mini... │  👤 YOU                    14:32:45│
+│ WORKSPACE          │  ───────────────────────────────── │
+│   ~/gem_code       │  Write a Python function...        │
+│ FILES              │                                    │
+│ ▼ 📁 gem_code      │  🤔 Thinking...                    │
+│   📄 main.py       │                                    │
+│   📄 pyproject...  │  [Send a message...] [Send] [Clear]│
+│   📁 src           │                                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+界面特点：
+- **左侧边栏**：显示模型信息、工作目录和可展开的文件树
+- **主聊天区域**：显示对话历史，支持 Markdown 渲染和代码高亮
+- **实时流式响应**：AI 回复逐字显示，带有思考动画
+- **底部输入框**：支持多行输入（Shift+Enter 换行）
+- **状态栏**：显示当前模型和连接状态
+
+快捷键：
+
+| 快捷键 | 功能 |
+|--------|------|
+| `Enter` | 发送消息 |
+| `Shift+Enter` | 插入换行 |
+| `Ctrl+C` | 退出应用 |
+| `Ctrl+L` | 清空聊天记录 |
+| `Ctrl+S` | 切换侧边栏显示 |
+| `?` | 显示帮助 |
+| `Escape` | 取消/聚焦输入框 |
+
+#### CLI 模式
+
+使用传统命令行界面：
 
 ```bash
-uv run python src/cli.py "你的问题"
+uv run python main.py --cli
+```
+
+或直接从命令行传入问题（自动进入 CLI 模式）：
+
+```bash
+uv run python main.py "你的问题"
 ```
 
 ## 使用方法
@@ -122,12 +175,14 @@ Agent 会在系统提示中自动加载并引用这些技能文档。
 ```
 gem-code/
 ├── src/
-│   ├── cli.py              # 命令行交互界面（程序入口）
+│   ├── cli.py              # 命令行交互界面（CLI 模式）
+│   ├── tui.py              # 终端用户界面（TUI 模式，基于 Textual）
 │   ├── config.py           # 配置管理和数据模型
 │   ├── session.py          # 对话会话管理（流式响应、工具调用循环）
 │   ├── tool.py             # 工具实现（bash、文件操作等）
 │   ├── skill.py            # 技能加载和管理
 │   └── decorate.py         # 终端颜色装饰函数
+├── main.py                 # 程序入口，支持 CLI/TUI 模式切换
 ├── .agents/
 │   └── skills/             # 技能目录
 │       └── requesting-code-review/
@@ -139,9 +194,26 @@ gem-code/
 
 ## 核心模块
 
+### TUI (tui.py)
+
+基于 [Textual](https://textual.textualize.io/) 的现代化终端界面，灵感来自 OpenCode：
+
+主要组件：
+
+| 组件 | 说明 |
+|------|------|
+| **ChatArea** | 滚动聊天记录区域，支持 Markdown 渲染和代码块高亮 |
+| **ChatMessageWidget** | 单条消息显示，带角色头像和时间戳 |
+| **StreamingMessageWidget** | 实时流式消息显示，逐字更新 |
+| **InputArea** | 输入框和操作按钮（Send / Clear） |
+| **Sidebar** | 侧边栏显示模型信息、工作目录、可展开的文件树 |
+| **StatusBar** | 底部状态栏，显示模型名称和当前状态 |
+| **ThinkingIndicator** | 思考动画指示器 |
+| **HelpScreen** | 快捷键帮助弹窗 |
+
 ### CLI (cli.py)
 
-- 程序入口点
+传统命令行界面：
 - 处理命令行参数
 - 交互式输入循环
 - 异常处理和程序退出
@@ -248,14 +320,40 @@ uv run pytest
 
 - **Python**: 3.12+
 - **包管理器**: [uv](https://docs.astral.sh/uv/)
-- **API 客户端**: OpenAI Python SDK
-- **终端输出**: Rich
-- **测试**: pytest
+- **API 客户端**: OpenAI Python SDK (>=2.21.0)
+- **TUI 框架**: [Textual](https://textual.textualize.io/) (>=0.85.0)
+- **终端输出**: Rich (>=14.3.3)
+- **网页抓取**: trafilatura (>=2.0.0)
+- **测试**: pytest (>=9.0.2)
 ## TODO
+- [x] TUI 界面
 - [ ] 分离显示大模型思考内容和输出内容
 - [ ] 上下文压缩
-- [ ] OpenAI API response适配
-- [ ] 适配mcp
+- [ ] OpenAI API Response 适配
+- [ ] 适配 MCP (Model Context Protocol)
+## 常见问题
+
+### TUI 界面无法启动
+
+确保终端支持 ANSI 转义序列，并尝试：
+```bash
+export $(cat .env | xargs)
+uv run python main.py
+```
+
+### 文件树无法展开
+
+检查 `WORKDIR` 环境变量是否正确设置。支持 `~` 家目录符号：
+```bash
+WORKDIR=~/your-project  # 会自动展开为 /home/user/your-project
+```
+
+### 流式响应卡顿
+
+某些终端模拟器可能会限制渲染性能。尝试：
+- 使用更现代的终端（如 Windows Terminal、iTerm2、Alacritty）
+- 减小 `max_tokens` 参数
+
 ## 安全提示
 
 ⚠️ **重要**：

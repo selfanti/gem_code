@@ -1,14 +1,14 @@
-from config import Config,createOpenAIClient,Message,ToolCall
-from tool import TOOLS,run_tool,parseToolArguments
-from skill import Skill,load_skills,format_skill_for_prompt
+from .config import Config,createOpenAIClient,Message,ToolCall
+from .tool import TOOLS,run_tool,parseToolArguments
+from .skill import Skill,load_skills,format_skill_for_prompt
 from openai import AsyncOpenAI
-from config import get_system_prompt
+from .config import get_system_prompt
 from typing import Callable, Optional,Dict,Any
 import asyncio
 from rich import print
 from rich.console import Console
 from rich.table import Table
-from decorate import pc_gray,pc_blue,pc_cyan,pc_magenta
+from .decorate import pc_gray,pc_blue,pc_cyan,pc_magenta
 console=Console()
 
 def _message_to_dict(m: Message) -> Dict[str, Any]:
@@ -59,7 +59,7 @@ class Session:
             stream =await self.client.chat.completions.create(
                 model=self.model,
                 messages=[_message_to_dict(m) for m in self.history], # type: ignore
-                #extra_body={"reasoning_split": True},
+                extra_body={"reasoning_split": True},
                 stream=True,
                 tools=TOOLS,# type: ignore
                 tool_choice="auto",

@@ -1,17 +1,17 @@
-from config import Config,load_config
+from .config import Config,load_config
 import sys
 from rich import print
 from rich.console import Console
 import asyncio
-from session import Session
-from decorate import pc_gray,pc_blue,pc_cyan,pc_magenta
+from .session import Session
+from .decorate import pc_gray,pc_blue,pc_cyan,pc_magenta
 import readline
 console=Console()
 async def async_input(prompt: str = "") -> str:
     return input(prompt)
 def onChunk(chunk:str):
     console.print(pc_blue(chunk), end="")
-async def main():
+async def main(initial_prompt: str | None = None):
     try:
         config=load_config()
     except Exception as e:
@@ -25,10 +25,9 @@ async def main():
 """))
     session=Session(config)
     await session.init()
-    args=" ".join(sys.argv[1:])
-    if args:
-        console.print(pc_gray(f"User input from command line:{args}"))
-        await session.chat(args,onChunk)
+    if initial_prompt:
+        console.print(pc_gray(f"User input from command line: {initial_prompt}"))
+        await session.chat(initial_prompt,onChunk)
         console.print()
     while True:
         try:

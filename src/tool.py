@@ -1,6 +1,6 @@
 from typing import Any, Final,Dict,List
 from rich.console import Console
-from config import ToolCall
+from .config import ToolCall
 import openai
 import json
 import os
