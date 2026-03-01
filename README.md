@@ -9,7 +9,7 @@
 - 📁 **技能扩展**：支持通过 SKILL.md 文件扩展专业能力
 - 💬 **流式响应**：实时显示 AI 回复
 - 🔄 **自动工具循环**：工具执行后自动继续对话，直到获得最终答案
-- 🖥️ **TUI 界面**：基于 Textual 的现代化终端用户界面（类似 OpenCode）
+- 🖥️ **TUI 界面**：基于 Textual 的现代化终端用户界面，性能优化（RichLog 流式渲染 + 批量更新）
 - 🎨 **终端美化**：使用 Rich 库提供彩色、格式化的终端输出
 - 📜 **历史记录**：维护对话上下文，支持多轮交互
 
@@ -82,20 +82,21 @@ uv run python main.py --tui
 - **左侧边栏**：显示模型信息、工作目录和可展开的文件树
 - **主聊天区域**：显示对话历史，支持 Markdown 渲染和代码高亮
 - **实时流式响应**：AI 回复逐字显示，带有思考动画
-- **底部输入框**：支持多行输入（Shift+Enter 换行）
+- **多行输入框**：支持多行编辑，自动调整高度（3-10行），`Ctrl+Enter` 发送
 - **状态栏**：显示当前模型和连接状态
 
 快捷键：
 
 | 快捷键 | 功能 |
 |--------|------|
-| `Enter` | 发送消息 |
-| `Shift+Enter` | 插入换行 |
+| `Ctrl+Enter` | 发送消息 |
+| `Enter` | 插入新行（多行输入） |
 | `Ctrl+C` | 退出应用 |
 | `Ctrl+L` | 清空聊天记录 |
 | `Ctrl+S` | 切换侧边栏显示 |
 | `?` | 显示帮助 |
 | `Escape` | 取消/聚焦输入框 |
+| `Tab` | 插入缩进 |
 
 #### CLI 模式
 
@@ -198,18 +199,30 @@ gem-code/
 
 基于 [Textual](https://textual.textualize.io/) 的现代化终端界面，灵感来自 OpenCode：
 
+**性能优化特点**：
+- **双层渲染架构**：流式阶段使用 RichLog（高性能文本组件），完成后自动转换为 Markdown（美观渲染）
+- **智能批量更新**：每 20 个字符或每 50ms 更新一次 UI，避免过度刷新
+- **增量追加**：只渲染新增内容，不重复渲染已有文本
+
 主要组件：
 
 | 组件 | 说明 |
 |------|------|
-| **ChatArea** | 滚动聊天记录区域，支持 Markdown 渲染和代码块高亮 |
-| **ChatMessageWidget** | 单条消息显示，带角色头像和时间戳 |
-| **StreamingMessageWidget** | 实时流式消息显示，逐字更新 |
+| **ChatArea** | 滚动聊天记录区域，管理消息生命周期 |
+| **ChatMessageWidget** | 已完成消息的 Markdown 渲染显示 |
+| **OptimizedStreamingWidget** | 高性能流式消息组件（RichLog + Markdown 转换） |
 | **InputArea** | 输入框和操作按钮（Send / Clear） |
 | **Sidebar** | 侧边栏显示模型信息、工作目录、可展开的文件树 |
 | **StatusBar** | 底部状态栏，显示模型名称和当前状态 |
 | **ThinkingIndicator** | 思考动画指示器 |
 | **HelpScreen** | 快捷键帮助弹窗 |
+
+可调整的性能参数（`src/tui.py`）：
+```python
+BATCH_SIZE = 20          # 每 20 个字符更新一次 UI
+BATCH_INTERVAL = 0.05    # 或每 50ms 更新一次
+MAX_LOG_LINES = 1000     # RichLog 最大行数限制
+```
 
 ### CLI (cli.py)
 
@@ -350,9 +363,15 @@ WORKDIR=~/your-project  # 会自动展开为 /home/user/your-project
 
 ### 流式响应卡顿
 
-某些终端模拟器可能会限制渲染性能。尝试：
-- 使用更现代的终端（如 Windows Terminal、iTerm2、Alacritty）
+TUI 已针对性能进行优化：
+- **流式阶段**：使用 RichLog 高性能组件（比 Markdown 快 10 倍以上）
+- **批量更新**：每 20 个字符或 50ms 刷新一次 UI
+- **完成后渲染**：流式结束后自动转换为 Markdown 保持格式
+
+如果仍然卡顿，尝试：
+- 使用更现代的终端（如 Windows Terminal、iTerm2、Alacritty、WezTerm）
 - 减小 `max_tokens` 参数
+- 检查终端字体渲染设置
 
 ## 安全提示
 

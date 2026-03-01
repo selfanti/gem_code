@@ -1,34 +1,47 @@
 """
 Gem Code TUI - A textual-based terminal user interface
 Inspired by OpenCode's interface design
+
+Performance optimized version:
+- RichLog for streaming display (ultra-fast)
+- Batch updates with throttling
+- Markdown rendering on completion
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Final
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Container
 from textual.widgets import (
     Static,
-    Input,
     Button,
     Label,
     Markdown,
     Footer,
     Tree,
     Rule,
+    RichLog,
+    TextArea,
 )
 from textual.reactive import reactive
 from textual.binding import Binding
 from textual.message import Message
 from textual.screen import ModalScreen
 
-
 from .config import Config, load_config
 from .session import Session
+
+
+# Performance tuning constants
+BATCH_SIZE: Final[int] = 20          # Update UI every N characters
+BATCH_INTERVAL: Final[float] = 0.05  # Or every 50ms
+MAX_LOG_LINES: Final[int] = 1000     # Keep log size manageable
 
 
 @dataclass
@@ -70,11 +83,14 @@ class ThinkingIndicator(Static):
         self.update(f"🤔 Thinking{'.' * self.dots}")
 
 
-class StreamingMessageWidget(Static):
-    """Widget to display a streaming message that updates in real-time"""
+class OptimizedStreamingWidget(Static):
+    """
+    High-performance streaming message widget.
+    Uses RichLog for streaming (fast) then converts to Markdown (pretty).
+    """
     
     DEFAULT_CSS = """
-    StreamingMessageWidget {
+    OptimizedStreamingWidget {
         width: 100%;
         height: auto;
         padding: 0 2 1 2;
@@ -82,38 +98,50 @@ class StreamingMessageWidget(Static):
         border-left: solid $success;
     }
     
-    StreamingMessageWidget .header-row {
+    OptimizedStreamingWidget .header-row {
         width: 100%;
         height: auto;
         margin-bottom: 1;
     }
     
-    StreamingMessageWidget .avatar {
+    OptimizedStreamingWidget .avatar {
         width: 3;
         content-align: center middle;
     }
     
-    StreamingMessageWidget .header {
+    OptimizedStreamingWidget .header {
         width: auto;
         text-style: bold;
         color: $success;
         content-align: left middle;
     }
     
-    StreamingMessageWidget .timestamp {
+    OptimizedStreamingWidget .timestamp {
         width: auto;
         color: $text-muted;
         text-style: italic;
         content-align: right middle;
     }
     
-    StreamingMessageWidget .content {
+    OptimizedStreamingWidget .content-container {
         width: 100%;
         height: auto;
         padding-left: 4;
     }
     
-    StreamingMessageWidget .content Markdown {
+    OptimizedStreamingWidget RichLog {
+        width: 100%;
+        height: auto;
+        background: transparent;
+        border: none;
+        padding: 0;
+    }
+    
+    OptimizedStreamingWidget RichLog:focus {
+        border: none;
+    }
+    
+    OptimizedStreamingWidget .content-container Markdown {
         background: transparent;
         padding: 0;
     }
@@ -122,6 +150,8 @@ class StreamingMessageWidget(Static):
     def __init__(self, **kwargs):
         self.timestamp = datetime.now()
         self._content = ""
+        self._buffer = ""  # Buffer for batch updates
+        self._last_update = 0.0
         super().__init__(**kwargs)
     
     def compose(self) -> ComposeResult:
@@ -132,18 +162,54 @@ class StreamingMessageWidget(Static):
             yield Label("GEM", classes="header")
             yield Label(time_str, classes="timestamp")
         
-        self._markdown = Markdown(self._content, classes="content")
-        yield self._markdown
+        with Container(classes="content-container"):
+            # Use RichLog for high-performance streaming
+            self._log = RichLog(highlight=True, markup=True, auto_scroll=True)
+            self._log.max_lines = MAX_LOG_LINES
+            yield self._log
     
-    def update_content(self, content: str) -> None:
-        """Update the content of this message"""
-        self._content = content
-        if hasattr(self, '_markdown'):
-            self._markdown.update(content)
+    def append_text(self, text: str) -> None:
+        """
+        Append text with batching for performance.
+        Call flush() to force immediate update.
+        """
+        self._buffer += text
+        now = time.monotonic()
+        
+        # Batch by size or time
+        buffer_len = len(self._buffer)
+        time_since_update = now - self._last_update
+        
+        if buffer_len >= BATCH_SIZE or time_since_update >= BATCH_INTERVAL:
+            self.flush()
+    
+    def flush(self) -> None:
+        """Force immediate update of buffered content"""
+        if self._buffer:
+            self._content += self._buffer
+            self._log.write(self._buffer)
+            self._buffer = ""
+            self._last_update = time.monotonic()
+    
+    def finalize(self) -> None:
+        """
+        Convert RichLog to Markdown for better formatting.
+        This is called when streaming is complete.
+        """
+        self.flush()
+        
+        # Get the container
+        container = self.query_one(".content-container", Container)
+        
+        # Remove RichLog
+        self._log.remove()
+        
+        # Add Markdown for final rendering
+        container.mount(Markdown(self._content, classes="content"))
 
 
 class ChatMessageWidget(Static):
-    """Widget to display a single chat message with Markdown support"""
+    """Widget to display a completed chat message with Markdown support"""
     
     DEFAULT_CSS = """
     ChatMessageWidget {
@@ -267,7 +333,7 @@ class ChatMessageWidget(Static):
 
 
 class ChatArea(VerticalScroll):
-    """Scrollable chat display area"""
+    """Optimized scrollable chat display area"""
     
     DEFAULT_CSS = """
     ChatArea {
@@ -279,7 +345,7 @@ class ChatArea(VerticalScroll):
     }
     """
     
-    _current_streaming: StreamingMessageWidget | None = None
+    _current_streaming: OptimizedStreamingWidget | None = None
     
     def add_message(self, entry: ChatEntry) -> ChatMessageWidget:
         """Add a new message to the chat"""
@@ -288,16 +354,29 @@ class ChatArea(VerticalScroll):
         self.scroll_end(animate=False)
         return widget
     
-    def start_streaming(self) -> StreamingMessageWidget:
+    def start_streaming(self) -> OptimizedStreamingWidget:
         """Start a new streaming message"""
-        self._current_streaming = StreamingMessageWidget()
+        self._current_streaming = OptimizedStreamingWidget()
         self.mount(self._current_streaming)
         self.scroll_end(animate=False)
         return self._current_streaming
     
     def finish_streaming(self) -> None:
-        """Mark current streaming message as complete"""
-        self._current_streaming = None
+        """Mark current streaming message as complete and convert to Markdown"""
+        if self._current_streaming:
+            self._current_streaming.finalize()
+            self._current_streaming = None
+        self.scroll_end(animate=False)
+    
+    def append_streaming(self, text: str) -> None:
+        """Append text to current streaming widget"""
+        if self._current_streaming:
+            self._current_streaming.append_text(text)
+    
+    def flush_streaming(self) -> None:
+        """Force flush the streaming buffer"""
+        if self._current_streaming:
+            self._current_streaming.flush()
     
     def clear(self) -> None:
         """Clear all messages"""
@@ -308,8 +387,8 @@ class ChatArea(VerticalScroll):
 
 class ResponseMessage(Message):
     """Message for streaming response updates"""
-    def __init__(self, content: str, done: bool = False, error: str | None = None) -> None:
-        self.content = content
+    def __init__(self, chunk: str | None = None, done: bool = False, error: str | None = None) -> None:
+        self.chunk = chunk  # None means just a flush request
         self.done = done
         self.error = error
         super().__init__()
@@ -332,11 +411,21 @@ class InputArea(Container):
         width: 100%;
         height: auto;
         margin-top: 1;
+        align: center top;
     }
     
-    InputArea Input {
+    InputArea TextArea {
         width: 1fr;
+        height: 3;
+        min-height: 3;
+        max-height: 10;
         margin-right: 1;
+        border: solid $primary-darken-2;
+        background: $surface;
+    }
+    
+    InputArea TextArea:focus {
+        border: solid $primary;
     }
     
     InputArea Button {
@@ -346,6 +435,17 @@ class InputArea(Container):
     
     InputArea #clear-btn {
         background: $error-darken-2;
+    }
+    
+    InputArea .button-col {
+        width: auto;
+        height: auto;
+    }
+    
+    InputArea .button-col Button {
+        width: auto;
+        min-width: 10;
+        margin-bottom: 1;
     }
     
     InputArea .hint {
@@ -368,36 +468,59 @@ class InputArea(Container):
     
     def compose(self) -> ComposeResult:
         with Horizontal(id="input-row"):
-            yield Input(
-                placeholder="Send a message...",
-                id="message-input"
+            text_area = TextArea(
+                id="message-input",
+                show_line_numbers=False,
+                soft_wrap=True,
+                tab_behavior="indent",
             )
-            yield Button("Send ⏎", id="send-btn", variant="primary")
-            yield Button("Clear", id="clear-btn", variant="error")
+            text_area.cursor_blink = False
+            yield text_area
+            
+            with Vertical(classes="button-col"):
+                yield Button("Send ⏎", id="send-btn", variant="primary")
+                yield Button("Clear", id="clear-btn", variant="error")
         
         yield Label(
-            "[^C] Quit  [^L] Clear Chat  [Enter] Send  [Shift+Enter] New Line  [?] Help",
+            "[^C] Quit  [^L] Clear  [^Enter] Send  [Enter] New Line  [?] Help",
             classes="hint"
         )
     
     def on_mount(self) -> None:
-        self.query_one("#message-input", Input).focus()
+        text_area = self.query_one("#message-input", TextArea)
+        text_area.focus()
+        # Set initial height
+        text_area.styles.height = 3
     
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle Enter key in input"""
-        if event.value.strip():
-            self.post_message(self.Submitted(event.value))
-            event.input.value = ""
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Auto-resize textarea based on content"""
+        text_area = event.text_area
+        lines = text_area.text.count('\n') + 1
+        # Height between 3 and 10 lines
+        new_height = min(max(lines, 3), 10)
+        text_area.styles.height = new_height
+    
+    def _send_message(self) -> None:
+        """Send the current message"""
+        text_area = self.query_one("#message-input", TextArea)
+        value = text_area.text.strip()
+        if value:
+            self.post_message(self.Submitted(value))
+            text_area.text = ""
+            text_area.styles.height = 3  # Reset height
+            text_area.focus()
+    
+    def on_key(self, event) -> None:
+        """Handle keyboard shortcuts"""
+        # Ctrl+Enter to send
+        if event.key == "ctrl+j" or (hasattr(event, 'ctrl') and event.ctrl and event.key == "enter"):
+            event.stop()
+            self._send_message()
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button clicks"""
         if event.button.id == "send-btn":
-            input_widget = self.query_one("#message-input", Input)
-            value = input_widget.value.strip()
-            if value:
-                self.post_message(self.Submitted(value))
-                input_widget.value = ""
-                input_widget.focus()
+            self._send_message()
         elif event.button.id == "clear-btn":
             self.post_message(self.ClearHistory())
     
@@ -407,10 +530,10 @@ class InputArea(Container):
         btn.disabled = loading
         btn.label = "Wait..." if loading else "Send ⏎"
         
-        input_widget = self.query_one("#message-input", Input)
-        input_widget.disabled = loading
+        text_area = self.query_one("#message-input", TextArea)
+        text_area.disabled = loading
         if not loading:
-            input_widget.focus()
+            text_area.focus()
 
 
 class Sidebar(Container):
@@ -666,7 +789,7 @@ class HelpScreen(ModalScreen):
 
 
 class GemCodeApp(App):
-    """Main TUI application for Gem Code"""
+    """Main TUI application for Gem Code - Performance Optimized"""
     
     CSS = """
     Screen {
@@ -705,6 +828,7 @@ class GemCodeApp(App):
         self._current_response = ""
         self._is_generating = False
         self._sidebar_visible = True
+        self._pending_messages = 0  # Track pending UI updates
         super().__init__()
     
     async def on_mount(self) -> None:
@@ -754,6 +878,7 @@ class GemCodeApp(App):
         # Set loading state
         self._is_generating = True
         self._current_response = ""
+        self._pending_messages = 0
         self.query_one("#input-area", InputArea).set_loading(True)
         self.query_one("#thinking-indicator", ThinkingIndicator).add_class("visible")
         self.query_one(StatusBar).status = "Generating..."
@@ -762,37 +887,58 @@ class GemCodeApp(App):
         streaming_widget = chat_area.start_streaming()
         
         # Generate response
-        asyncio.create_task(self._generate_response(user_message, streaming_widget))
+        asyncio.create_task(self._generate_response(user_message))
     
-    async def _generate_response(self, user_message: str, streaming_widget: StreamingMessageWidget) -> None:
-        """Generate response with streaming updates"""
+    async def _generate_response(self, user_message: str) -> None:
+        """Generate response with optimized streaming"""
+        chat_area = self.query_one("#chat-area", ChatArea)
+        
         try:
             def on_chunk(chunk: str) -> None:
-                """Handle streaming chunk"""
+                """Handle streaming chunk with batching"""
                 self._current_response += chunk
-                # Post message to update UI from main thread
-                self.post_message(ResponseMessage(self._current_response))
+                self._pending_messages += 1
+                
+                # Batch updates: every N chunks or when buffer is large enough
+                if (self._pending_messages >= BATCH_SIZE or 
+                    len(chunk) > 10 or  # Large chunk
+                    chunk.endswith(('.', '!', '?', '\n'))):  # Natural break
+                    
+                    self.post_message(ResponseMessage(chunk=self._current_response))
+                    self._pending_messages = 0
             
             # Run the chat
             await self.session.chat(user_message, on_chunk=on_chunk)
             
-            # Signal completion
-            self.post_message(ResponseMessage(self._current_response, done=True))
+            # Ensure final content is displayed
+            self.post_message(ResponseMessage(chunk=self._current_response, done=True))
             
         except Exception as e:
             self._current_response += f"\n\n❌ Error: {str(e)}"
-            self.post_message(ResponseMessage(self._current_response, done=True, error=str(e)))
+            self.post_message(ResponseMessage(chunk=self._current_response, done=True, error=str(e)))
     
     def on_response_message(self, message: ResponseMessage) -> None:
         """Handle response message - runs in main thread"""
-        # Update streaming widget
         chat_area = self.query_one("#chat-area", ChatArea)
-        if chat_area._current_streaming:
-            chat_area._current_streaming.update_content(message.content)
         
+        # Update streaming content
+        if message.chunk and chat_area._current_streaming:
+            # Calculate what text is new
+            current_content = getattr(chat_area._current_streaming, '_content', "")
+            new_content = message.chunk
+            
+            if len(new_content) > len(current_content):
+                new_text = new_content[len(current_content):]
+                chat_area.append_streaming(new_text)
+        
+        # Check if done
         if message.done:
-            self._is_generating = False
+            # Flush any remaining content
+            chat_area.flush_streaming()
+            # Finalize converts RichLog to Markdown
             chat_area.finish_streaming()
+            
+            self._is_generating = False
             self.query_one("#input-area", InputArea).set_loading(False)
             self.query_one("#thinking-indicator", ThinkingIndicator).remove_class("visible")
             self.query_one(StatusBar).status = "Ready"
