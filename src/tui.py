@@ -28,6 +28,7 @@ from textual.widgets import (
     Rule,
     RichLog,
     TextArea,
+    Collapsible,
 )
 from textual.reactive import reactive
 from textual.binding import Binding
@@ -53,6 +54,7 @@ class ChatEntry:
     is_tool_call: bool = False
     tool_name: str | None = None
     tool_result: str | None = None
+    reasoning_content: str | None = None  # 推理/思考内容
 
 
 class ThinkingIndicator(Static):
@@ -290,6 +292,28 @@ class ChatMessageWidget(Static):
         border: solid $warning-darken-2;
         color: $text-muted;
     }
+    
+    ChatMessageWidget .reasoning-collapsible {
+        width: 100%;
+        height: auto;
+        margin-bottom: 1;
+        padding-left: 4;
+    }
+    
+    ChatMessageWidget .reasoning-collapsible CollapsibleTitle {
+        color: $text-muted;
+        text-style: italic;
+    }
+    
+    ChatMessageWidget .reasoning-collapsible .reasoning-content {
+        background: $surface-darken-2;
+        padding: 1;
+        color: $text-muted;
+    }
+    
+    ChatMessageWidget .reasoning-collapsible .reasoning-content Markdown {
+        background: transparent;
+    }
     """
     
     def __init__(self, entry: ChatEntry, **kwargs):
@@ -319,6 +343,11 @@ class ChatMessageWidget(Static):
             yield Label(avatar, classes="avatar")
             yield Label(header_text, classes="header")
             yield Label(time_str, classes="timestamp")
+        
+        # 推理内容 - 使用 Collapsible 折叠显示（仅 assistant 角色）
+        if self.entry.role == "assistant" and self.entry.reasoning_content:
+            with Collapsible(title="🤔 Thinking...", collapsed=True, classes="reasoning-collapsible"):
+                yield Markdown(self.entry.reasoning_content, classes="reasoning-content")
         
         # Message content with Markdown
         content = self.entry.content or ""
@@ -391,6 +420,22 @@ class ResponseMessage(Message):
         self.chunk = chunk  # None means just a flush request
         self.done = done
         self.error = error
+        super().__init__()
+
+
+class ToolStartMessage(Message):
+    """Message for tool call start"""
+    def __init__(self, tool_name: str, args: dict) -> None:
+        self.tool_name = tool_name
+        self.args = args
+        super().__init__()
+
+
+class ToolResultMessage(Message):
+    """Message for tool call result"""
+    def __init__(self, tool_name: str, result: str) -> None:
+        self.tool_name = tool_name
+        self.result = result
         super().__init__()
 
 
@@ -818,10 +863,9 @@ class GemCodeApp(App):
     def __init__(self, config: Config):
         self.config = config
         self.session: Session | None = None
-        self._current_response = ""
         self._is_generating = False
         self._sidebar_visible = True
-        self._pending_messages = 0  # Track pending UI updates
+        self._current_tool_widget = None  # Track current tool widget for updates
         super().__init__()
     
     async def on_mount(self) -> None:
@@ -870,8 +914,6 @@ class GemCodeApp(App):
         
         # Set loading state
         self._is_generating = True
-        self._current_response = ""
-        self._pending_messages = 0
         self.query_one("#input-area", InputArea).set_loading(True)
         self.query_one("#thinking-indicator", ThinkingIndicator).add_class("visible")
         self.query_one(StatusBar).status = "Generating..."
@@ -886,55 +928,144 @@ class GemCodeApp(App):
         """Generate response with optimized streaming"""
         chat_area = self.query_one("#chat-area", ChatArea)
         
+        # 每轮的状态（每次 API 调用会重置）
+        turn_state = {
+            'content': "",
+            'reasoning': "",
+            'pending_messages': 0,
+        }
+        
         try:
-            def on_chunk(chunk: str) -> None:
-                """Handle streaming chunk with batching"""
-                self._current_response += chunk
-                self._pending_messages += 1
+            def on_reasoning(chunk: str) -> None:
+                """Handle reasoning content (thinking process)"""
+                turn_state['reasoning'] += chunk
+            
+            def on_content(chunk: str) -> None:
+                """Handle formal content output with batching"""
+                turn_state['content'] += chunk
+                turn_state['pending_messages'] += 1
                 
-                # Batch updates: every N chunks or when buffer is large enough
-                if (self._pending_messages >= BATCH_SIZE or 
-                    len(chunk) > 10 or  # Large chunk
-                    chunk.endswith(('.', '!', '?', '\n'))):  # Natural break
-                    
-                    self.post_message(ResponseMessage(chunk=self._current_response))
-                    self._pending_messages = 0
+                # 直接更新 streaming widget
+                if chat_area._current_streaming:
+                    chat_area.append_streaming(chunk)
+            
+            def on_turn_end(content: str, reasoning: str, has_more: bool) -> None:
+                """每次 API 调用结束时调用"""
+                # 完成当前 streaming widget，转换为 ChatMessageWidget
+                if chat_area._current_streaming:
+                    chat_area.flush_streaming()
+                    chat_area._current_streaming.remove()
+                    chat_area._current_streaming = None
+                
+                # 创建最终的 assistant 消息（包含 content 和 reasoning）
+                entry = ChatEntry(
+                    role="assistant",
+                    content=content,
+                    timestamp=datetime.now(),
+                    reasoning_content=reasoning if reasoning else None
+                )
+                chat_area.add_message(entry)
+                
+                # 如果有 tool 调用，显示 "Thinking..." 继续下一轮
+                if has_more:
+                    self.query_one(StatusBar).status = "Processing tools..."
+                    # 重置状态准备下一轮
+                    turn_state['content'] = ""
+                    turn_state['reasoning'] = ""
+                    # 创建新的 streaming widget 给下一轮使用
+                    chat_area.start_streaming()
+                else:
+                    # 全部完成
+                    self._is_generating = False
+                    self.query_one("#input-area", InputArea).set_loading(False)
+                    self.query_one("#thinking-indicator", ThinkingIndicator).remove_class("visible")
+                    self.query_one(StatusBar).status = "Ready"
+            
+            def on_tool_start(tool_name: str, args: dict) -> None:
+                """Handle tool call start"""
+                self.post_message(ToolStartMessage(tool_name, args))
+            
+            def on_tool_result(tool_name: str, result: str) -> None:
+                """Handle tool call result"""
+                self.post_message(ToolResultMessage(tool_name, result))
             
             # Run the chat
-            await self.session.chat(user_message, on_chunk=on_chunk) #type: ignore
-            
-            # Ensure final content is displayed
-            self.post_message(ResponseMessage(chunk=self._current_response, done=True))
+            await self.session.chat(
+                user_message,
+                on_reasoning=on_reasoning,
+                on_content=on_content,
+                on_turn_end=on_turn_end,
+                on_tool_start=on_tool_start,
+                on_tool_result=on_tool_result
+            )
             
         except Exception as e:
-            self._current_response += f"\n\n❌ Error: {str(e)}"
-            self.post_message(ResponseMessage(chunk=self._current_response, done=True, error=str(e)))
-    
-    def on_response_message(self, message: ResponseMessage) -> None:
-        """Handle response message - runs in main thread"""
-        chat_area = self.query_one("#chat-area", ChatArea)
-        
-        # Update streaming content
-        if message.chunk and chat_area._current_streaming:
-            # Calculate what text is new
-            current_content = getattr(chat_area._current_streaming, '_content', "")
-            new_content = message.chunk
-            
-            if len(new_content) > len(current_content):
-                new_text = new_content[len(current_content):]
-                chat_area.append_streaming(new_text)
-        
-        # Check if done
-        if message.done:
-            # Flush any remaining content
-            chat_area.flush_streaming()
-            # Finalize converts RichLog to Markdown
-            chat_area.finish_streaming()
-            
+            error_msg = f"\n\n❌ Error: {str(e)}"
+            if chat_area._current_streaming:
+                chat_area.append_streaming(error_msg)
+                chat_area.flush_streaming()
             self._is_generating = False
             self.query_one("#input-area", InputArea).set_loading(False)
             self.query_one("#thinking-indicator", ThinkingIndicator).remove_class("visible")
-            self.query_one(StatusBar).status = "Ready"
+            self.query_one(StatusBar).status = "Error"
+    
+    def on_response_message(self, message: ResponseMessage) -> None:
+        """Handle response message - runs in main thread (for error display only)"""
+        # Note: 正常的流式更新现在直接在 on_content 回调中处理
+        # 这个 handler 保留用于显示错误信息
+        if message.error:
+            chat_area = self.query_one("#chat-area", ChatArea)
+            if chat_area._current_streaming:
+                chat_area.append_streaming(f"\n\n❌ Error: {message.error}")
+                chat_area.flush_streaming()
+    
+    def on_tool_start_message(self, message: ToolStartMessage) -> None:
+        """Handle tool call start - display tool call in chat"""
+        chat_area = self.query_one("#chat-area", ChatArea)
+        
+        # Format args for display
+        args_str = str(message.args) if message.args else ""
+        if len(args_str) > 100:
+            args_str = args_str[:100] + "..."
+        
+        content = f"Calling tool: `{message.tool_name}`"
+        if args_str:
+            content += f"\n```json\n{args_str}\n```"
+        
+        # Create tool call entry
+        entry = ChatEntry(
+            role="tool",
+            content=content,
+            timestamp=datetime.now(),
+            is_tool_call=True,
+            tool_name=message.tool_name,
+            tool_result=None  # Will be updated when result arrives
+        )
+        
+        self._current_tool_widget = chat_area.add_message(entry)
+        
+        # Show thinking indicator
+        self.query_one("#thinking-indicator", ThinkingIndicator).add_class("visible")
+        self.query_one(StatusBar).status = f"Running {message.tool_name}..."
+    
+    def on_tool_result_message(self, message: ToolResultMessage) -> None:
+        """Handle tool call result - update tool widget with result"""
+        chat_area = self.query_one("#chat-area", ChatArea)
+        
+        # Update the existing tool widget if we have one
+        if self._current_tool_widget:
+            # Update the entry with result
+            self._current_tool_widget.entry.tool_result = message.result
+            
+            # Refresh the widget to show result
+            # Remove and re-add to refresh content
+            self._current_tool_widget.remove()
+            new_widget = ChatMessageWidget(self._current_tool_widget.entry)
+            chat_area.mount(new_widget)
+            chat_area.scroll_end(animate=False)
+        
+        self._current_tool_widget = None
+        self.query_one(StatusBar).status = "Processing..."
     
     def on_input_area_clear_history(self) -> None:
         """Handle clear history request"""

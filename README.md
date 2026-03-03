@@ -11,6 +11,7 @@
 - 💬 **流式响应**：实时显示 AI 回复
 - 🔄 **自动工具循环**：工具执行后自动继续对话，直到获得最终答案
 - 🖥️ **TUI 界面**：基于 Textual 的现代化终端用户界面，性能优化（RichLog 流式渲染 + 批量更新）
+- 🧠 **思考内容分离**：使用 Collapsible 组件折叠/展开模型的 reasoning 内容
 - 📝 **多行输入**：支持多行文本编辑，自动调整高度（3-10 行）
 - 🎨 **终端美化**：使用 Rich 库提供彩色、格式化的终端输出
 - 📜 **历史记录**：维护对话上下文，支持多轮交互
@@ -41,14 +42,11 @@ OPENAI_API_KEY=your-api-key-here
 OPENAI_BASE_URL=https://api.minimaxi.com/v1
 OPENAI_MODEL=MiniMax-M2.5
 WORKDIR=~/gem_code
-SKILLS_DIR=~/gem_code/.agents/skills  # 可选，技能目录
+SKILLS_DIR=~/gem_code/.agent/skills  # 可选，技能目录
+MCP_CONFIG_PATH=~/gem_code/mcp_config.json  # 可选，MCP 配置
 ```
 
-**注意**：程序不会自动加载 `.env` 文件，你需要手动导出环境变量或使用 `source`：
-
-```bash
-export $(cat .env | xargs)
-```
+**注意**：程序会自动加载 `.env` 文件，无需手动 source。
 
 ### 3. 运行
 
@@ -68,16 +66,17 @@ uv run python main.py --tui
 ┌─────────────────────────────────────────────────────────┐
 │ ⚡ Gem Code        │  🤖 GEM                  14:32:23 │
 │ ─────────────────  │  ───────────────────────────────── │
-│ MODEL              │  Hello! How can I help you today?  │
+│ MODEL              │  我来帮你读取 README.md 文件       │
 │   Name: MiniMax... │                                    │
-│   API: api.mini... │  👤 YOU                   14:32:45 │
-│ WORKSPACE          │  ───────────────────────────────── │
-│   ~/gem_code       │  Write a Python function...        │
+│   API: api.mini... │  🔧 READ_FILE                      │
+│ WORKSPACE          │  Calling tool: `read_file`         │
+│   ~/gem_code       │  Result: # gem-code...             │
 │ FILES              │                                    │
-│ ▼ 📁 gem_code      │  🤔 Thinking...                   │
-│   📄 main.py       │                                    │
-│   📄 pyproject...  │  ┌─────────────────┐ [Send ⏎]     │
-│   📁 src           │  │ 多行输入框...    │ [Clear]       │
+│ ▼ 📁 gem_code      │  🤖 GEM                  14:32:25 │
+│   📄 main.py       │  根据 README.md，这是一个...       │
+│   📄 pyproject...  │                                    │
+│   📁 src           │  ┌─────────────────┐ [Send ⏎]     │
+│                    │  │ 多行输入框...    │ [Clear]       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -85,6 +84,8 @@ uv run python main.py --tui
 - **左侧边栏**：显示模型信息、工作目录和可展开的文件树
 - **主聊天区域**：显示对话历史，支持 Markdown 渲染和代码高亮
 - **实时流式响应**：AI 回复逐字显示，带有思考动画
+- **思考内容折叠**：点击 "🤔 Thinking..." 可展开/折叠查看模型的推理过程
+- **工具调用显示**：Tool 调用紧跟对应的 Assistant 消息，结果清晰展示
 - **多行输入框**：支持多行编辑，自动调整高度（3-10行），`Enter` 换行
 - **状态栏**：显示当前模型和连接状态
 
@@ -156,7 +157,7 @@ Agent 可以自动调用以下内置工具：
 技能是扩展 Agent 专业能力的方式。在 `SKILLS_DIR` 目录下创建子文件夹，每个文件夹包含一个 `SKILL.md` 文件：
 
 ```
-.agents/skills/
+.agent/skills/
 ├── python-best-practices/
 │   └── SKILL.md
 ├── react-patterns/
@@ -241,10 +242,9 @@ gem-code/
 │   └── decorate.py         # 终端颜色装饰函数
 ├── main.py                 # 程序入口，支持 CLI/TUI 模式切换
 ├── mcp_config.example.json # MCP 配置示例
-├── .agents/
-│   └── skills/             # 技能目录
-│       └── requesting-code-review/
-│           └── SKILL.md
+├── .agent/                 # 技能目录
+│   └── skills/
+│       └── ...
 ├── .env_example            # 环境变量示例
 ├── pyproject.toml          # 项目配置和依赖
 └── uv.lock                 # 依赖锁定文件
@@ -260,13 +260,19 @@ gem-code/
 - **双层渲染架构**：流式阶段使用 RichLog（高性能文本组件），完成后自动转换为 Markdown（美观渲染）
 - **智能批量更新**：每 20 个字符或每 50ms 更新一次 UI，避免过度刷新
 - **增量追加**：只渲染新增内容，不重复渲染已有文本
+- **分轮次消息**：每次 API 调用产生独立消息，Tool 调用与对应 Content 正确分组
+
+**思考内容折叠**：
+- 使用 `Collapsible` 组件折叠 reasoning 内容
+- 默认折叠，点击 "🤔 Thinking..." 展开查看
+- 独立的 CSS 样式（暗淡背景、斜体标题）
 
 主要组件：
 
 | 组件 | 说明 |
 |------|------|
 | **ChatArea** | 滚动聊天记录区域，管理消息生命周期 |
-| **ChatMessageWidget** | 已完成消息的 Markdown 渲染显示 |
+| **ChatMessageWidget** | 已完成消息的 Markdown 渲染显示，支持 reasoning 折叠 |
 | **OptimizedStreamingWidget** | 高性能流式消息组件（RichLog + Markdown 转换） |
 | **InputArea** | 多行文本输入框（TextArea），支持自动高度调整，Send/Clear 按钮 |
 | **Sidebar** | 侧边栏显示模型信息、工作目录、可展开的文件树 |
@@ -287,6 +293,7 @@ MAX_LOG_LINES = 1000     # RichLog 最大行数限制
 - 处理命令行参数
 - 交互式输入循环
 - 异常处理和程序退出
+- 支持 reasoning/content 分离显示（使用不同颜色）
 
 ### Session 会话管理 (session.py)
 
@@ -296,6 +303,18 @@ MAX_LOG_LINES = 1000     # RichLog 最大行数限制
 - 管理工具调用循环（调用工具 → 获取结果 → 继续对话）
 - 异步加载和集成技能
 - 初始化 MCP 客户端并合并 MCP 工具到 OpenAI API 调用
+
+**回调架构**：
+```python
+await session.chat(
+    user_input,
+    on_reasoning=lambda chunk: ...,    # 思考内容
+    on_content=lambda chunk: ...,      # 正式输出
+    on_turn_end=lambda content, reasoning, has_more: ...,  # 每轮结束
+    on_tool_start=lambda name, args: ...,  # 工具开始
+    on_tool_result=lambda name, result: ... # 工具结果
+)
+```
 
 ### MCP 客户端 (mcp_client.py)
 
@@ -377,6 +396,20 @@ class FunctionCall:
     arguments: str  # JSON 字符串
 ```
 
+### ChatEntry (TUI)
+
+```python
+@dataclass
+class ChatEntry:
+    role: str                      # "user", "assistant", "tool"
+    content: str                   # 显示内容
+    timestamp: datetime            # 时间戳
+    is_tool_call: bool = False     # 是否是工具调用
+    tool_name: str | None = None   # 工具名称
+    tool_result: str | None = None # 工具结果
+    reasoning_content: str | None = None  # 推理/思考内容
+```
+
 ## 工作流程
 
 1. 用户输入问题
@@ -385,6 +418,11 @@ class FunctionCall:
    - 如果是普通文本：直接显示
    - 如果是工具调用：执行工具，将结果追加到历史，重新请求
 4. 循环直到获得最终答案（无工具调用）
+
+**消息分组**：
+- 每次 API 调用产生一条独立的 Assistant 消息
+- Tool 调用紧跟在触发它的 Assistant 消息之后
+- 第二轮及以后的响应显示为新的 Assistant 消息
 
 ## 开发
 
@@ -411,19 +449,23 @@ uv run pytest
 - **终端输出**: Rich (>=14.3.3)
 - **网页抓取**: trafilatura (>=2.0.0)
 - **测试**: pytest (>=9.0.2)
+
 ## TODO
+
 - [x] TUI 界面
 - [x] MCP (Model Context Protocol) 支持
-- [ ] 分离显示大模型思考内容和输出内容
+- [x] 分离显示大模型思考内容和输出内容
 - [ ] 上下文压缩
 - [ ] OpenAI API Response 适配
+- [ ] 对话历史持久化
+- [ ] 消息编辑/重试功能
+
 ## 常见问题
 
 ### TUI 界面无法启动
 
 确保终端支持 ANSI 转义序列，并尝试：
 ```bash
-export $(cat .env | xargs)
 uv run python main.py
 ```
 
@@ -454,6 +496,13 @@ TUI 已针对性能进行优化：
 - 使用更现代的终端（如 Windows Terminal、iTerm2、Alacritty、WezTerm）
 - 减小 `max_tokens` 参数
 - 检查终端字体渲染设置
+
+### Reasoning 内容未显示
+
+确保：
+1. API 支持 `reasoning_split` 参数（MiniMax M2.5 支持）
+2. 模型支持 reasoning（M2.5 支持，M1 不支持）
+3. 在 TUI 中点击 "🤔 Thinking..." 可以展开查看
 
 ## 安全提示
 

@@ -2,6 +2,7 @@ from .config import Config,load_config
 import sys
 from rich import print
 from rich.console import Console
+from rich.text import Text
 import asyncio
 from .session import Session
 from .decorate import pc_gray,pc_blue,pc_cyan,pc_magenta
@@ -9,8 +10,23 @@ import readline
 console=Console()
 async def async_input(prompt: str = "") -> str:
     return input(prompt)
-def onChunk(chunk:str):
-    console.print(pc_blue(chunk), end="")
+
+# CLI 模式：分别处理 reasoning 和 content
+def on_reasoning(chunk: str):
+    """处理 reasoning（思考过程）- 使用暗淡颜色"""
+    console.print(Text(chunk, style="dim"), end="")
+
+def on_content(chunk: str):
+    """处理正式 content - 使用蓝色"""
+    console.print(Text(chunk, style="blue"), end="")
+
+def on_tool_start(tool_name: str, args: dict):
+    """处理 tool 开始调用"""
+    console.print(pc_blue(f"\n🛠️  Executing tool: {tool_name}"))
+
+def on_tool_result(tool_name: str, result: str):
+    """处理 tool 执行结果"""
+    console.print(pc_blue(f"👁 OBSERVE\n{result}\n"))
 async def main(initial_prompt: str | None = None):
     try:
         config=load_config()
@@ -27,7 +43,7 @@ async def main(initial_prompt: str | None = None):
     await session.init()
     if initial_prompt:
         console.print(pc_gray(f"User input from command line: {initial_prompt}"))
-        await session.chat(initial_prompt,onChunk)
+        await session.chat(initial_prompt, on_reasoning=on_reasoning, on_content=on_content, on_tool_start=on_tool_start, on_tool_result=on_tool_result)
         console.print()
     while True:
         try:
@@ -39,7 +55,7 @@ async def main(initial_prompt: str | None = None):
             if not user_input.strip():
                 continue
             console.print(pc_gray(f"➜ User: {user_input}"))
-            await session.chat(user_input,onChunk)
+            await session.chat(user_input, on_reasoning=on_reasoning, on_content=on_content, on_tool_start=on_tool_start, on_tool_result=on_tool_result)
             console.print()
         except EOFError:
             break

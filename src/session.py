@@ -95,60 +95,127 @@ class Session:
     async def init(self):
         await self._init_task
 
-    async def chat(self,user_input: str, on_chunk: Optional[Callable[[str], None]] = None) -> None:
+    async def chat(
+        self,
+        user_input: str,
+        on_reasoning: Optional[Callable[[str], None]] = None,
+        on_content: Optional[Callable[[str], None]] = None,
+        on_tool_start: Optional[Callable[[str, dict], None]] = None,
+        on_tool_result: Optional[Callable[[str, str], None]] = None,
+        on_turn_end: Optional[Callable[[str, str, bool], None]] = None
+    ) -> None:
+        """
+        处理聊天请求，支持 reasoning 和 content 分离输出
+        
+        Args:
+            user_input: 用户输入
+            on_reasoning: reasoning content 回调（思考过程），可为 None
+            on_content: 正式输出内容回调，可为 None
+            on_tool_start: tool 开始调用回调 (tool_name, args)，可为 None
+            on_tool_result: tool 执行结果回调 (tool_name, result)，可为 None
+            on_turn_end: 每次 API 调用结束时回调 (content, reasoning, has_more)，
+                        has_more=True 表示还有 tool 调用需要处理，TUI 应该等待
+        """
         self.history.append(Message(role="user", content=user_input))
         while True:
             console.print(pc_gray("🤖 Thinking...")) 
-            stream =await self.client.chat.completions.create(
+            stream = await self.client.chat.completions.create(
                 model=self.model,
-                messages=[_message_to_dict(m) for m in self.history], # type: ignore
+                messages=[_message_to_dict(m) for m in self.history],
                 extra_body={"reasoning_split": True},
                 stream=True,
-                tools=self._all_tools,# type: ignore
+                tools=self._all_tools,
                 tool_choice="auto",
                 max_tokens=1024*32
-            )  # type: ignore
+            )
             has_tool_calls = False
-            full_content = ""
-            tool_calls_map:Dict[str,ToolCall] = {}
+            content_buffer = ""
+            reasoning_buffer = ""
+            tool_calls_map: Dict[str, ToolCall] = {}
+            
             async for chunk in stream:
-                delta=chunk.choices[0].delta
-                if(delta.content):
-                    full_content+=delta.content
-                    if on_chunk:
-                        on_chunk(delta.content)
+                delta = chunk.choices[0].delta
+                
+                # 处理 reasoning content（思考过程）
+                # MiniMax API 返回格式: reasoning_details = [{"text": "..."}]
+                if hasattr(delta, "reasoning_details") and delta.reasoning_details:
+                    for detail in delta.reasoning_details:
+                        if isinstance(detail, dict) and "text" in detail:
+                            reasoning_delta = detail["text"]
+                            if reasoning_delta and on_reasoning:
+                                on_reasoning(reasoning_delta)
+                            reasoning_buffer += reasoning_delta
+                
+                # 处理正式 content 输出
+                if delta.content:
+                    content_delta = delta.content
+                    if content_delta:
+                        if on_content:
+                            on_content(content_delta)
+                        content_buffer += content_delta
+
+                # 处理 tool calls
                 if delta.tool_calls:
                     has_tool_calls = True
                     for tc in delta.tool_calls:
-                        if(tc.id):
-                            is_existing=tool_calls_map.get(tc.id) is not None
-                            if(is_existing):
+                        if tc.id:
+                            is_existing = tool_calls_map.get(tc.id) is not None
+                            if is_existing:
                                 if tc.function.arguments:
-                                    tool_calls_map[tc.id].function.arguments+=tc.function.arguments
+                                    tool_calls_map[tc.id].function.arguments += tc.function.arguments
                             else:
-                                tool_calls_map[tc.id]=ToolCall(
+                                tool_calls_map[tc.id] = ToolCall(
                                     id=tc.id,
                                     function=tc.function,
                                     type=tc.type
                                 )
-                        elif (tc.function.arguments):
-                            entries=list(tool_calls_map.values())
+                        elif tc.function.arguments:
+                            entries = list(tool_calls_map.values())
                             if len(entries) > 0:
                                 lastentry = entries[-1]
                                 lastentry.function.arguments += tc.function.arguments
-            message=Message(role="assistant", content=full_content, tool_calls=list(tool_calls_map.values()) if has_tool_calls else None)
+            
+            # 构建 assistant message，保存到历史记录
+            # 注意：只保存正式 content，reasoning 是过程不保存
+            message = Message(
+                role="assistant",
+                content=content_buffer,
+                tool_calls=list(tool_calls_map.values()) if has_tool_calls else None
+            )
             self.history.append(message)
-            if has_tool_calls and  message.tool_calls:
-                console.print("")
+            
+            # 通知本轮结束 (content, reasoning, has_more)
+            if on_turn_end:
+                on_turn_end(content_buffer, reasoning_buffer, has_tool_calls)
+            
+            if has_tool_calls and message.tool_calls:
                 for toolcall in message.tool_calls:
-                    args=parseToolArguments(toolcall)
-                    result=await run_tool(toolcall.function.name,args,self.workdir)
-                    console.print(pc_blue("👁 OBSERVE"))
-                    console.print(pc_blue(f"🛠️  Tool '{toolcall.function.name}' executed with result:\n{result}"))
-                    console.print("")
+                    args = parseToolArguments(toolcall)
+                    tool_name = toolcall.function.name
+                    
+                    # 通知 tool 开始调用
+                    if on_tool_start:
+                        on_tool_start(tool_name, args)
+                    else:
+                        # 默认输出到 console（CLI 模式）
+                        console.print("")
+                        console.print(pc_blue(f"🛠️  Executing tool: {tool_name}"))
+                    
+                    result = await run_tool(tool_name, args, self.workdir)
+                    
+                    # 通知 tool 执行结果
+                    if on_tool_result:
+                        on_tool_result(tool_name, result)
+                    else:
+                        # 默认输出到 console（CLI 模式）
+                        console.print(pc_blue("👁 OBSERVE"))
+                        console.print(pc_blue(f"Result:\n{result}"))
+                        console.print("")
+                    
                     self.history.append(Message(role="tool", content=result, tool_call_id=toolcall.id))
 
-                console.print(pc_magenta("🔄 REPEAT"))
+                if not on_tool_start and not on_tool_result:
+                    console.print(pc_magenta("🔄 REPEAT"))
                 continue
             break
     
