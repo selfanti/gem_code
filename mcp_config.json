@@ -1,0 +1,46 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/tao/gem_code"],
+      "environment": {},
+      "enabled": false,
+      "timeout": 30000
+    },
+    
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest"],
+      "environment": {},
+      "enabled": true,
+      "timeout": 60000
+    },
+    
+    "fetch": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-fetch"],
+      "environment": {},
+      "enabled": false,
+      "timeout": 30000
+    },
+    
+    "everything": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-everything"],
+      "environment": {},
+      "enabled": false,
+      "timeout": 30000
+    },
+    
+    "remote-example": {
+      "_comment": "远程 SSE 服务器示例",
+      "type": "remote",
+      "url": "http://localhost:3000/sse",
+      "headers": {
+        "Authorization": "Bearer your-token-here"
+      },
+      "enabled": false,
+      "timeout": 30000
+    }
+  }
+}

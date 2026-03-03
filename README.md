@@ -5,6 +5,7 @@
 ## 特性
 
 - 🤖 **多模型支持**：支持 OpenAI 兼容格式的 API（默认使用 MiniMax-M2.5）
+- 🔌 **MCP 协议**：支持 Model Context Protocol，可连接外部工具服务器
 - 🛠️ **工具调用**：内置 Bash 命令执行、文件读写、字符串替换等工具
 - 📁 **技能扩展**：支持通过 SKILL.md 文件扩展专业能力
 - 💬 **流式响应**：实时显示 AI 回复
@@ -65,18 +66,18 @@ uv run python main.py --tui
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ ⚡ Gem Code        │  🤖 GEM                    14:32:23 │
+│ ⚡ Gem Code        │  🤖 GEM                  14:32:23 │
 │ ─────────────────  │  ───────────────────────────────── │
 │ MODEL              │  Hello! How can I help you today?  │
 │   Name: MiniMax... │                                    │
-│   API: api.mini... │  👤 YOU                    14:32:45│
+│   API: api.mini... │  👤 YOU                   14:32:45 │
 │ WORKSPACE          │  ───────────────────────────────── │
 │   ~/gem_code       │  Write a Python function...        │
 │ FILES              │                                    │
-│ ▼ 📁 gem_code      │  🤔 Thinking...                    │
+│ ▼ 📁 gem_code      │  🤔 Thinking...                   │
 │   📄 main.py       │                                    │
 │   📄 pyproject...  │  ┌─────────────────┐ [Send ⏎]     │
-│   📁 src           │  │ 多行输入框...    │ [Clear]      │
+│   📁 src           │  │ 多行输入框...    │ [Clear]       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -84,14 +85,13 @@ uv run python main.py --tui
 - **左侧边栏**：显示模型信息、工作目录和可展开的文件树
 - **主聊天区域**：显示对话历史，支持 Markdown 渲染和代码高亮
 - **实时流式响应**：AI 回复逐字显示，带有思考动画
-- **多行输入框**：支持多行编辑，自动调整高度（3-10行），`Ctrl+Enter` 发送
+- **多行输入框**：支持多行编辑，自动调整高度（3-10行），`Enter` 换行
 - **状态栏**：显示当前模型和连接状态
 
 快捷键：
 
 | 快捷键 | 功能 |
 |--------|------|
-| `Ctrl+Enter` | 发送消息 |
 | `Enter` | 插入新行（多行输入） |
 | `Ctrl+C` | 退出应用 |
 | `Ctrl+L` | 清空聊天记录 |
@@ -101,7 +101,7 @@ uv run python main.py --tui
 | `Tab` | 插入缩进 |
 
 **按钮操作**：
-- **Send ⏎**：发送当前输入的消息（等同于 `Ctrl+Enter`）
+- **Send ⏎**：发送当前输入的消息
 - **Clear**：清空当前输入框内容和聊天记录历史（等同于 `Ctrl+L`）
 
 #### CLI 模式
@@ -135,18 +135,9 @@ uv run python main.py "你的问题"
 
 输入 `exit` 或按 `Ctrl+C` 退出程序。
 
-### 多行输入
-
-TUI 模式使用 `TextArea` 组件作为输入框：
-
-- **自动高度调整**：根据内容自动调整高度（3-10 行）
-- **多行编辑**：直接按 `Enter` 插入换行符
-- **发送消息**：按 `Ctrl+Enter` 发送
-- **Tab 缩进**：支持 `Tab` 键插入缩进（适合代码输入）
-
 ### 支持的工具
 
-Agent 可以自动调用以下工具：
+Agent 可以自动调用以下内置工具：
 
 | 工具 | 描述 | 参数 |
 |------|------|------|
@@ -155,6 +146,8 @@ Agent 可以自动调用以下工具：
 | `write_file` | 写入文件内容 | `path`, `content`, `description` |
 | `StrReplaceFile` | 基于字符串匹配替换文件内容 | `path`, `edits` |
 | `fetch_url` | 获取 URL 内容并转换为 Markdown | `url`, `description` |
+
+此外，通过 **MCP (Model Context Protocol)** 协议，可以连接外部工具服务器，扩展 Agent 的能力。
 
 工具输出会自动截断（超过 32000 字符时保留头部和尾部）。
 
@@ -186,6 +179,52 @@ SKILL.md 格式示例：
 
 Agent 会在系统提示中自动加载并引用这些技能文档。
 
+### MCP 配置
+
+支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 协议，可连接外部工具服务器。
+
+**配置文件位置**（按优先级）：
+1. `./mcp_config.json`（当前目录）
+2. `~/.gem-code/mcp_config.json`
+3. `~/.config/gem-code/mcp.json`
+4. 或通过 `MCP_CONFIG_PATH` 环境变量指定路径
+
+**配置文件示例** (`mcp_config.json`)：
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
+      "enabled": true,
+      "timeout": 30000
+    },
+    "fetch": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-fetch"],
+      "enabled": true
+    },
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest"],
+      "enabled": false
+    }
+  }
+}
+```
+
+**支持的 MCP 服务器**：
+
+| 服务器 | 安装命令 | 功能 |
+|--------|----------|------|
+| `server-filesystem` | `npx -y @modelcontextprotocol/server-filesystem <path>` | 文件系统访问 |
+| `server-fetch` | `npx -y @modelcontextprotocol/server-fetch` | HTTP 请求 |
+| `playwright-mcp` | `npx -y @playwright/mcp@latest` | 浏览器自动化 |
+| `server-everything` | `npx -y @modelcontextprotocol/server-everything` | 测试服务器 |
+
+启动时会自动连接配置的 MCP 服务器，并将工具注册到 OpenAI API。
+
 ## 项目结构
 
 ```
@@ -194,11 +233,14 @@ gem-code/
 │   ├── cli.py              # 命令行交互界面（CLI 模式）
 │   ├── tui.py              # 终端用户界面（TUI 模式，基于 Textual）
 │   ├── config.py           # 配置管理和数据模型
-│   ├── session.py          # 对话会话管理（流式响应、工具调用循环）
-│   ├── tool.py             # 工具实现（bash、文件操作等）
+│   ├── session.py          # 对话会话管理（流式响应、工具调用循环、MCP 集成）
+│   ├── tool.py             # 工具实现（bash、文件操作、MCP 工具路由）
 │   ├── skill.py            # 技能加载和管理
+│   ├── mcp.py              # MCP 数据模型（McpLocal、McpRemote 等）
+│   ├── mcp_client.py       # MCP 客户端实现
 │   └── decorate.py         # 终端颜色装饰函数
 ├── main.py                 # 程序入口，支持 CLI/TUI 模式切换
+├── mcp_config.example.json # MCP 配置示例
 ├── .agents/
 │   └── skills/             # 技能目录
 │       └── requesting-code-review/
@@ -253,6 +295,19 @@ MAX_LOG_LINES = 1000     # RichLog 最大行数限制
 - 处理流式响应，实时显示 AI 回复
 - 管理工具调用循环（调用工具 → 获取结果 → 继续对话）
 - 异步加载和集成技能
+- 初始化 MCP 客户端并合并 MCP 工具到 OpenAI API 调用
+
+### MCP 客户端 (mcp_client.py)
+
+`MCPClient` 类提供：
+- `connect_server()`: 连接 MCP 服务器（支持 stdio 和 sse 两种传输方式）
+- `get_all_tools_openai_format()`: 获取所有 MCP 工具的 OpenAI function 格式
+- `call_tool()`: 执行 MCP 工具调用
+- `disconnect_all()`: 清理所有连接
+
+配置加载函数：
+- `load_mcp_config_from_env()`: 从环境变量或默认位置加载配置
+- `load_mcp_config_from_file()`: 从 JSON 文件加载配置
 
 ### 工具系统 (tool.py)
 
@@ -291,6 +346,8 @@ TOOLS = [
 | `OPENAI_MODEL` | ❌ | MiniMax-M2.5 | 模型名称 |
 | `WORKDIR` | ❌ | 当前目录 | 工作目录（工具执行位置） |
 | `SKILLS_DIR` | ❌ | - | 技能目录路径 |
+| `MCP_CONFIG_PATH` | ❌ | - | MCP 配置文件路径 |
+| `MCP_CONFIG` | ❌ | - | MCP 配置 JSON 字符串 |
 
 ## 数据模型
 
@@ -349,16 +406,17 @@ uv run pytest
 - **Python**: 3.12+
 - **包管理器**: [uv](https://docs.astral.sh/uv/)
 - **API 客户端**: OpenAI Python SDK (>=2.21.0)
+- **MCP SDK**: [mcp](https://github.com/modelcontextprotocol/python-sdk) (>=1.26.0)
 - **TUI 框架**: [Textual](https://textual.textualize.io/) (>=0.85.0)
 - **终端输出**: Rich (>=14.3.3)
 - **网页抓取**: trafilatura (>=2.0.0)
 - **测试**: pytest (>=9.0.2)
 ## TODO
 - [x] TUI 界面
+- [x] MCP (Model Context Protocol) 支持
 - [ ] 分离显示大模型思考内容和输出内容
 - [ ] 上下文压缩
 - [ ] OpenAI API Response 适配
-- [ ] 适配 MCP (Model Context Protocol)
 ## 常见问题
 
 ### TUI 界面无法启动

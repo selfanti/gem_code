@@ -1,4 +1,4 @@
-from typing import Any, Final,Dict,List
+from typing import Any, Final,Dict,List,Optional
 from rich.console import Console
 from .config import ToolCall
 import openai
@@ -7,6 +7,7 @@ import os
 from trafilatura import fetch_url,extract
 console=Console()
 import subprocess
+from .mcp_client import MCPClient
 TOOLS: Final[List[Dict[str, Any]]] = [
     {
         "type": "function",
@@ -136,18 +137,41 @@ TOOLS: Final[List[Dict[str, Any]]] = [
         }
     }
 ]
+# MCP 客户端实例（将在 Session 中初始化）
+_mcp_client: Optional[MCPClient] = None
+
+def set_mcp_client(client: Optional[MCPClient]) -> None:
+    """设置全局 MCP 客户端实例"""
+    global _mcp_client
+    _mcp_client = client
+
+def get_mcp_client() -> Optional[MCPClient]:
+    """获取全局 MCP 客户端实例"""
+    return _mcp_client
+
 async def run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
     """
     Execute a tool call (async)
     
     Args:
-        name: Tool name ("bash", "read_file", "write_file", "StrReplaceFile,"fetch_url"")
+        name: Tool name ("bash", "read_file", "write_file", "StrReplaceFile","fetch_url", or "mcp__server__tool")
         args: Argument dictionary
         workdir: Working directory
     Returns:
         Formatted result string
     """
     try:
+        # MCP 工具调用
+        if name.startswith("mcp__"):
+            if _mcp_client is None:
+                return f"Error: MCP client not initialized, cannot call tool: {name}"
+            try:
+                result = await _mcp_client.call_tool(name, args)
+                return formatted_tool_output(result)
+            except Exception as e:
+                return f"Error calling MCP tool {name}: {str(e)}"
+        
+        # 内置工具调用
         if name == "bash":
             command = args.get("command", "")
             output=await run_bash(command, workdir)

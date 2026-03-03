@@ -1,0 +1,48 @@
+{
+  "mcpServers": {
+    "_comment": "这是一个 MCP 配置文件示例，复制为 mcp_config.json 并放在以下位置之一：~/.gem-code/mcp_config.json, ~/.config/gem-code/mcp.json, 或 ./mcp_config.json",
+    
+    "filesystem": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/tao/gem_code"],
+      "environment": {},
+      "enabled": false,
+      "timeout": 30000
+    },
+    
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest"],
+      "environment": {},
+      "enabled": false,
+      "timeout": 60000
+    },
+    
+    "fetch": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-fetch"],
+      "environment": {},
+      "enabled": false,
+      "timeout": 30000
+    },
+    
+    "everything": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-everything"],
+      "environment": {},
+      "enabled": false,
+      "timeout": 30000
+    },
+    
+    "remote-example": {
+      "_comment": "远程 SSE 服务器示例",
+      "type": "remote",
+      "url": "http://localhost:3000/sse",
+      "headers": {
+        "Authorization": "Bearer your-token-here"
+      },
+      "enabled": false,
+      "timeout": 30000
+    }
+  }
+}

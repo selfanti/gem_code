@@ -482,7 +482,7 @@ class InputArea(Container):
                 yield Button("Clear", id="clear-btn", variant="error")
         
         yield Label(
-            "[^C] Quit  [^L] Clear  [^Enter] Send  [Enter] New Line  [?] Help",
+            "[Ctrl+C] Quit  [Ctrl+L] Clear  [Send] Click button to send  [?] Help",
             classes="hint"
         )
     
@@ -509,13 +509,6 @@ class InputArea(Container):
             text_area.text = ""
             text_area.styles.height = 3  # Reset height
             text_area.focus()
-    
-    def on_key(self, event) -> None:
-        """Handle keyboard shortcuts"""
-        # Ctrl+Enter to send
-        if event.key == "ctrl+j" or (hasattr(event, 'ctrl') and event.ctrl and event.key == "enter"):
-            event.stop()
-            self._send_message()
     
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button clicks"""
@@ -768,8 +761,8 @@ class HelpScreen(ModalScreen):
             yield Rule()
             
             shortcuts = [
-                ("Enter", "Send message"),
-                ("Shift+Enter", "Insert new line"),
+                ("Enter", "Insert new line"),
+                ("Send Button", "Send message"),
                 ("Ctrl+C", "Quit application"),
                 ("Ctrl+L", "Clear chat history"),
                 ("Ctrl+S", "Toggle sidebar"),
@@ -908,7 +901,7 @@ class GemCodeApp(App):
                     self._pending_messages = 0
             
             # Run the chat
-            await self.session.chat(user_message, on_chunk=on_chunk)
+            await self.session.chat(user_message, on_chunk=on_chunk) #type: ignore
             
             # Ensure final content is displayed
             self.post_message(ResponseMessage(chunk=self._current_response, done=True))
