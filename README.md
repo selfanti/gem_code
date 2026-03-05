@@ -160,13 +160,6 @@ await session.chat(
 )
 ```
 
-### 工具打印格式代码位置
-
-| 模式 | 函数 | 文件位置 |
-|------|------|----------|
-| CLI | `on_tool_start()` / `on_tool_result()` | `src/cli.py` 第 22-28 行 |
-| TUI | `on_tool_start_message()` / `on_tool_result_message()` | `src/tui.py` 第 1030-1079 行 |
-
 ## 环境变量
 
 | 变量 | 必需 | 默认值 | 说明 |
