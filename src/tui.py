@@ -1021,14 +1021,14 @@ class GemCodeApp(App):
                 self.post_message(ToolResultMessage(tool_name, result))
             
             # Run the chat
-            await self.session.chat(
+            await self.session.chat(         #type: ignore
                 user_message,
                 on_reasoning=on_reasoning,
                 on_content=on_content,
                 on_turn_end=on_turn_end,
                 on_tool_start=on_tool_start,
                 on_tool_result=on_tool_result
-            )
+            ) 
             
         except Exception as e:
             # Replace [ with \[ to prevent Rich markup parsing
