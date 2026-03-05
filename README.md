@@ -199,7 +199,7 @@ await session.chat(
 ## 参考链接  
 - agent skills 协议 <https://agentskills.io/home>
 - mcp协议 <https://modelcontextprotocol.io/docs/getting-started/intro>
-- opencode
+- opencode <https://github.com/anomalyco/opencode>
 
 ## 许可证
 
