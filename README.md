@@ -187,6 +187,17 @@ await session.chat(
 - **TUI**: [Textual](https://textual.textualize.io/) (>=0.85.0)
 - **终端**: Rich (>=14.3.3)
 
+## TODO
+
+- [x] TUI 界面
+- [x] MCP (Model Context Protocol) 支持
+- [x] 分离显示大模型思考内容和输出内容
+- [x] 按需加载skill
+- [ ] 上下文管理
+- [ ] OpenAI API Response/Anthropic API 适配
+- [ ] 对话历史持久化
+- [ ] 消息编辑/重试功能
+
 ## 安全提示
 
 ⚠️ 请勿将包含 API 密钥的 `.env` 文件提交到版本控制。
