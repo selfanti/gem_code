@@ -2,5 +2,7 @@
 
 # Ignore directories anywhere in the repository
 .claude/
-.agent/
+.agents/
 .VSCodeCounter/
+.vscode/
+

@@ -189,7 +189,7 @@ await session.chat(
 - [x] 按需加载skill
 - [ ] 上下文管理
 - [ ] OpenAI API Response/Anthropic API 适配
-- [ ] 对话历史持久化
+- [ ] 支持agent teams
 - [ ] 消息编辑/重试功能
 
 ## 安全提示
