@@ -90,9 +90,10 @@ uv run python main.py "你的问题"  # 一次性提问
 SKILL.md 格式：
 
 ```markdown
-# 技能名称
-
-## 描述
+---
+name: 
+description: 
+---
 
 详细说明内容...
 ```
@@ -194,6 +195,11 @@ await session.chat(
 ## 安全提示
 
 ⚠️ 请勿将包含 API 密钥的 `.env` 文件提交到版本控制。
+
+## 参考链接  
+- agent skills 协议 <https://agentskills.io/home>
+- mcp协议 <https://modelcontextprotocol.io/docs/getting-started/intro>
+- opencode
 
 ## 许可证
 
