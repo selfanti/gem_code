@@ -28,41 +28,54 @@ def on_tool_result(tool_name: str, result: str):
     """处理 tool 执行结果"""
     console.print(pc_blue(f"👁 OBSERVE\n{result}\n"))
 async def main(initial_prompt: str | None = None):
+    session: Session | None = None
     try:
-        config=load_config()
+        config = load_config()
     except Exception as e:
         print(f"[red]Error loading config: {e}[/]")
         return
+    
     console.print(pc_cyan("""
 ╔══════════════════════════════════════╗
 ║     Gem Code CLI Agent v1.0.0        ║
 ║     按 Ctrl+C 或输入 exit 退出        ║
 ╚══════════════════════════════════════╝
 """))
-    session=Session(config)
-    await session.init()
-    if initial_prompt:
-        console.print(pc_gray(f"User input from command line: {initial_prompt}"))
-        await session.chat(initial_prompt, on_reasoning=on_reasoning, on_content=on_content, on_tool_start=on_tool_start, on_tool_result=on_tool_result)
-        console.print()
-    while True:
-        try:
-            user_input = await async_input(("➜ "))
-            if not user_input or user_input.lower()=="exit":
-                if user_input:
-                    console.print(pc_gray("Exiting..."))
-                break
-            if not user_input.strip():
-                continue
-            console.print(pc_gray(f"➜ User: {user_input}"))
-            await session.chat(user_input, on_reasoning=on_reasoning, on_content=on_content, on_tool_start=on_tool_start, on_tool_result=on_tool_result)
+    
+    try:
+        session = Session(config)
+        await session.init()
+        
+        if initial_prompt:
+            console.print(pc_gray(f"User input from command line: {initial_prompt}"))
+            await session.chat(initial_prompt, on_reasoning=on_reasoning, on_content=on_content, on_tool_start=on_tool_start, on_tool_result=on_tool_result)
             console.print()
-        except EOFError:
-            break
-        except KeyboardInterrupt:
-            console.print(pc_gray("\nExiting..."))
-            break
-if __name__=="__main__":
+        
+        while True:
+            try:
+                user_input =await async_input("➜ ")
+                if not user_input or user_input.lower() == "exit":
+                    if user_input:
+                        console.print(pc_gray("Exiting..."))
+                    break
+                if not user_input.strip():
+                    continue
+                console.print(pc_gray(f"➜ User: {user_input}"))
+                await session.chat(user_input, on_reasoning=on_reasoning, on_content=on_content, on_tool_start=on_tool_start, on_tool_result=on_tool_result)
+                console.print()
+            except EOFError:
+                console.print(pc_gray("\nExiting..."))
+                break
+            except KeyboardInterrupt:
+                console.print(pc_gray("\nExiting..."))
+                break
+    finally:
+        # 确保资源被清理
+        if session:
+            await session.cleanup()
+
+
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as e:

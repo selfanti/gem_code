@@ -1,6 +1,7 @@
 from typing import Any, Final,Dict,List,Optional
 from rich.console import Console
-from .config import ToolCall
+from .config import ToolCall,Message
+from.skill import load_skills
 import openai
 import json
 import os
@@ -8,6 +9,7 @@ from trafilatura import fetch_url,extract
 console=Console()
 import subprocess
 from .mcp_client import MCPClient
+
 TOOLS: Final[List[Dict[str, Any]]] = [
     {
         "type": "function",
@@ -149,55 +151,6 @@ def get_mcp_client() -> Optional[MCPClient]:
     """获取全局 MCP 客户端实例"""
     return _mcp_client
 
-async def run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
-    """
-    Execute a tool call (async)
-    
-    Args:
-        name: Tool name ("bash", "read_file", "write_file", "StrReplaceFile","fetch_url", or "mcp__server__tool")
-        args: Argument dictionary
-        workdir: Working directory
-    Returns:
-        Formatted result string
-    """
-    try:
-        # MCP 工具调用
-        if name.startswith("mcp__"):
-            if _mcp_client is None:
-                return f"Error: MCP client not initialized, cannot call tool: {name}"
-            try:
-                result = await _mcp_client.call_tool(name, args)
-                return formatted_tool_output(result)
-            except Exception as e:
-                return f"Error calling MCP tool {name}: {str(e)}"
-        
-        # 内置工具调用
-        if name == "bash":
-            command = args.get("command", "")
-            output=await run_bash(command, workdir)
-            return formatted_tool_output(output)
-        elif name == "read_file":
-            path = args.get("path", "")
-            output=await run_read_file(path,workdir)
-            return formatted_tool_output(output)
-        elif name == "write_file":
-            path = args.get("path", "")
-            content = args.get("content", "")
-            output = await run_write_file(path, content, workdir)
-            return formatted_tool_output(output)
-        elif name == "StrReplaceFile":
-            path = args.get("path", "")
-            edits = args.get("edits", [])
-            output=await run_str_replace_file(path, edits, workdir)
-            return formatted_tool_output(output)
-        elif name == "fetch_url":
-            url=args.get("url","")
-            output=await run_fetch_url_to_markdown(url)
-            return formatted_tool_output(output)
-        else:
-            return f"Error: Unknown tool: {name}"
-    except Exception as e:
-        return f"Error executing tool {name}: {str(e)}"
 
 async def run_bash(command: str, workdir: str) -> str:
     # Execute shell command in the specified working directory

@@ -34,15 +34,16 @@ from textual.reactive import reactive
 from textual.binding import Binding
 from textual.message import Message
 from textual.screen import ModalScreen
+from rich.text import Text
 
 from .config import Config, load_config
 from .session import Session
 
 
 # Performance tuning constants
-BATCH_SIZE: Final[int] = 20          # Update UI every N characters
+BATCH_SIZE: Final[int] = 10          # Update UI every N characters
 BATCH_INTERVAL: Final[float] = 0.05  # Or every 50ms
-MAX_LOG_LINES: Final[int] = 1000     # Keep log size manageable
+MAX_LOG_LINES: Final[int] = 3000     # Keep log size manageable
 
 
 @dataclass
@@ -166,7 +167,8 @@ class OptimizedStreamingWidget(Static):
         
         with Container(classes="content-container"):
             # Use RichLog for high-performance streaming
-            self._log = RichLog(highlight=True, markup=True, auto_scroll=True)
+            # markup=False to avoid parsing [] as Rich markup (fixes MarkupError with code)
+            self._log = RichLog(highlight=True, markup=False, auto_scroll=True)
             self._log.max_lines = MAX_LOG_LINES
             yield self._log
     
@@ -175,6 +177,8 @@ class OptimizedStreamingWidget(Static):
         Append text with batching for performance.
         Call flush() to force immediate update.
         """
+        if not self.is_mounted:
+            return
         self._buffer += text
         now = time.monotonic()
         
@@ -187,27 +191,37 @@ class OptimizedStreamingWidget(Static):
     
     def flush(self) -> None:
         """Force immediate update of buffered content"""
+        if not self.is_mounted or not self._log.is_mounted:
+            return
         if self._buffer:
-            self._content += self._buffer
-            self._log.write(self._buffer)
-            self._buffer = ""
-            self._last_update = time.monotonic()
+            try:
+                self._content += self._buffer
+                self._log.write(self._buffer)
+                self._buffer = ""
+                self._last_update = time.monotonic()
+            except Exception:
+                pass  # Log may have been removed
     
     def finalize(self) -> None:
         """
         Convert RichLog to Markdown for better formatting.
         This is called when streaming is complete.
         """
-        self.flush()
-        
-        # Get the container
-        container = self.query_one(".content-container", Container)
-        
-        # Remove RichLog
-        self._log.remove()
-        
-        # Add Markdown for final rendering
-        container.mount(Markdown(self._content, classes="content"))
+        try:
+            self.flush()
+            
+            # Get the container
+            container = self.query_one(".content-container", Container)
+            
+            # Remove RichLog
+            if self._log and self._log.is_mounted:
+                self._log.remove()
+            
+            # Add Markdown for final rendering
+            container.mount(Markdown(self._content or "", classes="content"))
+        except Exception as e:
+            # Log error but don't crash
+            print(f"Error finalizing streaming widget: {e}")
 
 
 class ChatMessageWidget(Static):
@@ -341,7 +355,7 @@ class ChatMessageWidget(Static):
         # Header row
         with Horizontal(classes="header-row"):
             yield Label(avatar, classes="avatar")
-            yield Label(header_text, classes="header")
+            yield Label(Text(header_text), classes="header")
             yield Label(time_str, classes="timestamp")
         
         # 推理内容 - 使用 Collapsible 折叠显示（仅 assistant 角色）
@@ -358,7 +372,9 @@ class ChatMessageWidget(Static):
             result_text = self.entry.tool_result
             if len(result_text) > 500:
                 result_text = result_text[:250] + "\n... [truncated] ...\n" + result_text[-200:]
-            yield Static(f"Result:\n{result_text}", classes="tool-result")
+            # Use Text object to avoid Rich markup parsing issues
+            text = Text(f"Result:\n{result_text}")
+            yield Static(text, classes="tool-result")
 
 
 class ChatArea(VerticalScroll):
@@ -399,13 +415,19 @@ class ChatArea(VerticalScroll):
     
     def append_streaming(self, text: str) -> None:
         """Append text to current streaming widget"""
-        if self._current_streaming:
-            self._current_streaming.append_text(text)
+        if self._current_streaming and self._current_streaming.is_mounted:
+            try:
+                self._current_streaming.append_text(text)
+            except Exception:
+                pass  # Widget may have been removed
     
     def flush_streaming(self) -> None:
         """Force flush the streaming buffer"""
-        if self._current_streaming:
-            self._current_streaming.flush()
+        if self._current_streaming and self._current_streaming.is_mounted:
+            try:
+                self._current_streaming.flush()
+            except Exception:
+                pass  # Widget may have been removed
     
     def clear(self) -> None:
         """Clear all messages"""
@@ -655,12 +677,12 @@ class Sidebar(Container):
             
             with Vertical(classes="info-row"):
                 yield Label("Name:", classes="info-label")
-                yield Label(self.config.model, classes="info-value")
+                yield Label(Text(self.config.model), classes="info-value")
             
             with Vertical(classes="info-row"):
                 yield Label("API:", classes="info-label")
                 domain = self.config.base_url.replace("https://", "").replace("http://", "").split("/")[0]
-                yield Label(domain[:25], classes="info-value")
+                yield Label(Text(domain[:25]), classes="info-value")
         
         # Workdir info
         with Vertical(classes="section"):
@@ -669,7 +691,7 @@ class Sidebar(Container):
             workdir = self.config.workdir
             if len(workdir) > 28:
                 workdir = "..." + workdir[-25:]
-            yield Label(workdir, classes="info-value")
+            yield Label(Text(workdir), classes="info-value")
         
         # File tree
         with Vertical(classes="section"):
@@ -748,7 +770,7 @@ class StatusBar(Static):
     status = reactive("Ready")
     
     def watch_status(self, status: str) -> None:
-        self.update(f" ♦ {status}")
+        self.update(Text(f" ♦ {status}"))
 
 
 class HelpScreen(ModalScreen):
@@ -947,15 +969,24 @@ class GemCodeApp(App):
                 
                 # 直接更新 streaming widget
                 if chat_area._current_streaming:
-                    chat_area.append_streaming(chunk)
+                    try:
+                        chat_area.append_streaming(chunk)
+                    except Exception as e:
+                        # Widget may have been removed
+                        print(f"Error appending streaming content: {e}")
             
             def on_turn_end(content: str, reasoning: str, has_more: bool) -> None:
                 """每次 API 调用结束时调用"""
                 # 完成当前 streaming widget，转换为 ChatMessageWidget
                 if chat_area._current_streaming:
-                    chat_area.flush_streaming()
-                    chat_area._current_streaming.remove()
-                    chat_area._current_streaming = None
+                    try:
+                        chat_area.flush_streaming()
+                        if chat_area._current_streaming.is_mounted:
+                            chat_area._current_streaming.remove()
+                    except Exception:
+                        pass  # Widget may already be removed
+                    finally:
+                        chat_area._current_streaming = None
                 
                 # 创建最终的 assistant 消息（包含 content 和 reasoning）
                 entry = ChatEntry(
@@ -1000,7 +1031,8 @@ class GemCodeApp(App):
             )
             
         except Exception as e:
-            error_msg = f"\n\n❌ Error: {str(e)}"
+            # Replace [ with \[ to prevent Rich markup parsing
+            error_msg = f"\n\n❌ Error: {str(e)}".replace("[", r"\[")
             if chat_area._current_streaming:
                 chat_area.append_streaming(error_msg)
                 chat_area.flush_streaming()
@@ -1016,7 +1048,9 @@ class GemCodeApp(App):
         if message.error:
             chat_area = self.query_one("#chat-area", ChatArea)
             if chat_area._current_streaming:
-                chat_area.append_streaming(f"\n\n❌ Error: {message.error}")
+                # Replace [ with \[ to prevent Rich markup parsing
+                error_msg = f"\n\n❌ Error: {message.error}".replace("[", r"\[")
+                chat_area.append_streaming(error_msg)
                 chat_area.flush_streaming()
     
     def on_tool_start_message(self, message: ToolStartMessage) -> None:
@@ -1054,22 +1088,36 @@ class GemCodeApp(App):
         
         # Update the existing tool widget if we have one
         if self._current_tool_widget:
-            # Update the entry with result
-            self._current_tool_widget.entry.tool_result = message.result
-            
-            # Refresh the widget to show result
-            # Remove and re-add to refresh content
-            self._current_tool_widget.remove()
-            new_widget = ChatMessageWidget(self._current_tool_widget.entry)
-            chat_area.mount(new_widget)
-            chat_area.scroll_end(animate=False)
+            try:
+                # Save entry reference before removing widget
+                entry = self._current_tool_widget.entry
+                # Update the entry with result
+                entry.tool_result = message.result
+                
+                # Refresh the widget to show result
+                # Remove and re-add to refresh content
+                if self._current_tool_widget.is_mounted:
+                    self._current_tool_widget.remove()
+                new_widget = ChatMessageWidget(entry)
+                chat_area.mount(new_widget)
+                chat_area.scroll_end(animate=False)
+            except Exception as e:
+                # Log error but don't crash
+                print(f"Error updating tool widget: {e}")
+            finally:
+                self._current_tool_widget = None
         
-        self._current_tool_widget = None
         self.query_one(StatusBar).status = "Processing..."
     
     def on_input_area_clear_history(self) -> None:
         """Handle clear history request"""
         self.action_clear()
+    
+    async def action_quit(self) -> None:
+        """Quit application with cleanup"""
+        if self.session:
+            await self.session.cleanup()
+        self.exit()
     
     def action_clear(self) -> None:
         """Clear chat history"""
@@ -1097,6 +1145,11 @@ class GemCodeApp(App):
         sidebar = self.query_one("#sidebar", Sidebar)
         self._sidebar_visible = not self._sidebar_visible
         sidebar.display = self._sidebar_visible
+    
+    async def on_unmount(self) -> None:
+        """Cleanup when app unmounts"""
+        if self.session:
+            await self.session.cleanup()
 
 
 def run_tui():

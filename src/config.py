@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal
 import os
+from dotenv import load_dotenv
 from typing import Optional,List
 from openai import OpenAI, AsyncOpenAI
 @dataclass
@@ -14,6 +15,7 @@ class Config:
 
 def load_config() -> Config:
     # 获取环境变量（带类型提示）
+    load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL")
     model = os.getenv("OPENAI_MODEL", "MiniMax-M2.5")  # 提供默认值
@@ -64,10 +66,10 @@ SYSTEM_PROMPT="""
 3. 保持回答简洁、直接
 
 ## Skills
-如果用户询问的内容与某个 Skill 相关，请参考对应 Skill 文档中的最佳实践。
+如果用户询问的内容与某个Skill的描述相关，自动触发调用以"skill__"开头的tool来加载 Skill.md 文档中的最佳实践到上下文。
 
 ## 重要
-- 所有命令都必须在工作目录下执行
+- 所有命令都必须在工作目录下执行，不允许在没有用户同意的情况下执行危险的代码
 - 使用完整路径避免混淆
 - 遇到错误时，修复后重试
 """
@@ -93,3 +95,5 @@ class ToolCall:
     type:str="function"
 def createOpenAIClient(api_key:str, base_url:str) -> AsyncOpenAI:
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+

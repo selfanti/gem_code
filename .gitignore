@@ -1,4 +1,6 @@
 .env
+
+# Ignore directories anywhere in the repository
 .claude/
 .agent/
-.VSCodeCounter
+.VSCodeCounter/

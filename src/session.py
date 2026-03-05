@@ -1,6 +1,7 @@
 from .config import Config,createOpenAIClient,Message,ToolCall
-from .tool import TOOLS,run_tool,parseToolArguments, set_mcp_client
-from .skill import Skill,load_skills,format_skill_for_prompt
+from .tool import TOOLS,parseToolArguments, set_mcp_client,_mcp_client,formatted_tool_output,\
+run_bash,run_fetch_url_to_markdown,run_read_file,run_str_replace_file,run_write_file
+from .skill import Skill,load_skills,format_skill_for_prompt,SkillTool,format_one_skill_for_prompt
 from .mcp_client import MCPClient, load_mcp_config_from_env, create_mcp_client_with_config
 from openai import AsyncOpenAI
 from .config import get_system_prompt
@@ -49,9 +50,8 @@ class Session:
         system_prompt=get_system_prompt()
         if skills_dir:
             self.skills = await load_skills(skills_dir)
-            skills_prompt = format_skill_for_prompt(self.skills)
-            if skills_prompt:
-                system_prompt += "\n\n" + skills_prompt
+            skill_tools=[SkillTool(skill.name,skill.description).to_openai_function() for skill in self.skills]
+            self._all_tools.extend(skill_tools)
         
         # 初始化 MCP 客户端
         await self._init_mcp_client()
@@ -201,7 +201,7 @@ class Session:
                         console.print("")
                         console.print(pc_blue(f"🛠️  Executing tool: {tool_name}"))
                     
-                    result = await run_tool(tool_name, args, self.workdir)
+                    result = await self.run_tool(tool_name, args, self.workdir)
                     
                     # 通知 tool 执行结果
                     if on_tool_result:
@@ -218,6 +218,64 @@ class Session:
                     console.print(pc_magenta("🔄 REPEAT"))
                 continue
             break
+    async def run_tool(self,name: str, args: Dict[str, Any], workdir: str) -> str:
+        """
+        Execute a tool call (async)
+        
+        Args:
+            name: Tool name ("bash", "read_file", "write_file", "StrReplaceFile","fetch_url", or "mcp__server__tool")
+            args: Argument dictionary
+            workdir: Working directory
+        Returns:
+            Formatted result string
+        """
+        try:
+            # Skill 工具调用 - 返回 skill 内容，由调用方添加到 history
+            if name.startswith("skill__"):
+                skill_name = name.replace("skill__", "")
+                # 在 self.skills 中查找匹配的 skill，找不到返回 None
+                skill = next((s for s in self.skills if s.name == skill_name), None)
+                if skill:
+                    return format_one_skill_for_prompt(skill)
+                else:
+                    return f"Error: Can't find the skill {skill_name}"
+            if name.startswith("mcp__"):
+                if _mcp_client is None:
+                    return f"Error: MCP client not initialized, cannot call tool: {name}"
+                try:
+                    result = await _mcp_client.call_tool(name, args)
+                    return formatted_tool_output(result)
+                except Exception as e:
+                    return f"Error calling MCP tool {name}: {str(e)}"
+            
+            # 内置工具调用
+            if name == "bash":
+                command = args.get("command", "")
+                output=await run_bash(command, workdir)
+                return formatted_tool_output(output)
+            elif name == "read_file":
+                path = args.get("path", "")
+                output=await run_read_file(path,workdir)
+                return formatted_tool_output(output)
+            elif name == "write_file":
+                path = args.get("path", "")
+                content = args.get("content", "")
+                output = await run_write_file(path, content, workdir)
+                return formatted_tool_output(output)
+            elif name == "StrReplaceFile":
+                path = args.get("path", "")
+                edits = args.get("edits", [])
+                output=await run_str_replace_file(path, edits, workdir)
+                return formatted_tool_output(output)
+            elif name == "fetch_url":
+                url=args.get("url","")
+                output=await run_fetch_url_to_markdown(url)
+                return formatted_tool_output(output)
+            else:
+                return f"Error: Unknown tool: {name}"
+        except Exception as e:
+            return f"Error executing tool {name}: {str(e)}"
+
     
     async def cleanup(self) -> None:
         """清理资源，断开 MCP 连接"""
