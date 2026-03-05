@@ -191,6 +191,7 @@ await session.chat(
 - [ ] OpenAI API Response/Anthropic API 适配
 - [ ] 支持agent teams
 - [ ] 消息编辑/重试功能
+- [ ] deepseek/kimi api支持
 
 ## 安全提示
 

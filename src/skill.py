@@ -86,31 +86,31 @@ class SkillTool:
             }
         }  
 #opencode的一种实现方式，使用RAG技术判断skill和任务相关性
-class SkillMatcher:
-    def __init__(self, model_name='all-MiniLM-L6-v2'):
-        # 自动使用 GPU（如果可用）
-        self.model = SentenceTransformer(model_name, device='cuda' if torch.cuda.is_available() else 'cpu')
-        self.skill_embeddings = None
-        self.skills = []
+# class SkillMatcher:
+#     def __init__(self, model_name='all-MiniLM-L6-v2'):
+#         # 自动使用 GPU（如果可用）
+#         self.model = SentenceTransformer(model_name, device='cuda' if torch.cuda.is_available() else 'cpu')
+#         self.skill_embeddings = None
+#         self.skills = []
     
-    def index_skills(self, skills: list):
-        """预计算所有 skill 的向量（只需执行一次）"""
-        self.skills = skills
-        descriptions = [s.description for s in skills]
-        # ✅ 批量编码：一次处理所有 skills，速度提升 10-100 倍
-        self.skill_embeddings = self.model.encode(
-            descriptions, 
-            batch_size=32,      # 根据内存调整
-            show_progress_bar=True,
-            convert_to_numpy=True
-        )
+#     def index_skills(self, skills: list):
+#         """预计算所有 skill 的向量（只需执行一次）"""
+#         self.skills = skills
+#         descriptions = [s.description for s in skills]
+#         # ✅ 批量编码：一次处理所有 skills，速度提升 10-100 倍
+#         self.skill_embeddings = self.model.encode(
+#             descriptions, 
+#             batch_size=32,      # 根据内存调整
+#             show_progress_bar=True,
+#             convert_to_numpy=True
+#         )
     
-    def match(self, user_input: str, threshold: float = 0.7, top_k: int = 5) -> list:
-        # 编码用户输入（单次）
-        input_embedding = self.model.encode([user_input], convert_to_numpy=True)
+#     def match(self, user_input: str, threshold: float = 0.7, top_k: int = 5) -> list:
+#         # 编码用户输入（单次）
+#         input_embedding = self.model.encode([user_input], convert_to_numpy=True)
         
-        # ✅ 矩阵运算计算所有相似度（向量化，无 Python 循环）
-        similarities = cosine_similarity(input_embedding, self.skill_embeddings)[0]
+#         # ✅ 矩阵运算计算所有相似度（向量化，无 Python 循环）
+#         similarities = cosine_similarity(input_embedding, self.skill_embeddings)[0]
         
         # 筛选并排序
         matches = []

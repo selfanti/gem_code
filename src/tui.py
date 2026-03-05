@@ -42,7 +42,7 @@ from .session import Session
 
 # Performance tuning constants
 BATCH_SIZE: Final[int] = 10          # Update UI every N characters
-BATCH_INTERVAL: Final[float] = 0.05  # Or every 50ms
+BATCH_INTERVAL: Final[float] = 0.02  # Or every 20ms
 MAX_LOG_LINES: Final[int] = 3000     # Keep log size manageable
 
 
