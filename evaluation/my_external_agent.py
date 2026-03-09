@@ -1,35 +1,30 @@
-from harbor.agents.base import BaseAgent,BaseEnvironment,AgentContext
+from harbor.agents.installed.base import BaseInstalledAgent,BaseModel,AgentContext
 
-class MyExternalAgent(BaseAgent):
-    @staticmethod
-    def name() -> str:
-        """The name of the agent."""
-        pass
+class ExecInput(BaseModel):
+    command: str
+    cwd: str | None = None
+    env: dict[str, str] | None = None
+    timeout_sec: int | None = None
 
-    def version(self) -> str | None:
-        """The version of the agent."""
-        pass
-
-    async def setup(self, environment: BaseEnvironment) -> None:
+class MyInstalledAgent(BaseInstalledAgent):
+    @property
+    def _install_agent_template_path(self) -> Path:
         """
-        Run commands to setup the agent & its tools.
+        Path to the jinja template script for installing the agent in the container.
         """
         pass
 
-    async def run(
-        self,
-        instruction: str,
-        environment: BaseEnvironment,
-        context: AgentContext,
-    ) -> None:
+    def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         """
-        Runs the agent in the environment. Be sure to populate the context with the
-        results of the agent execution. Ideally, populate the context as the agent
-        executes in case of a timeout or other error.
+        Create the commands to run the agent in the container. Usually this is a single
+        command that passes the instruction to the agent and executes it in headless
+        mode.
+        """
+        pass
 
-        Args:
-            instruction: The task instruction.
-            environment: The environment in which to complete the task.
-            context: The context to populate with the results of the agent execution.
+    def populate_context_post_run(self, context: AgentContext) -> None:
+        """
+        Populate the context with the results of the agent execution. Assumes the run()
+        method has already been called. Typically involves parsing a trajectory file.
         """
         pass

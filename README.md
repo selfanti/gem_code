@@ -182,18 +182,18 @@ await session.chat(
 - **终端**: Rich (>=14.3.3)
 
 ## TODO
-
+本项目大体上仿照Claude code和kimicode CLI，kimicode CLI可以参考<https://github.com/MoonshotAI/kimi-cli>
 - [x] TUI 界面
 - [x] MCP (Model Context Protocol) 支持
 - [x] 分离显示大模型思考内容和输出内容
 - [x] 按需加载skill
-- [ ] 上下文管理，短期记忆（summary）和长期记忆（observation）的实现
-- [ ] OpenAI API Response/Anthropic API 适配
-- [ ] 支持agent teams，编写领导agent和子agent的prompt，为了充分利用上下文，领导agent在分配任务时应该按照项目上下文来分配
-- [ ] 暂停工作流功能
-- [ ] deepseek/kimi api支持
-- [ ] 实现针对所有工具的选择性路由，而不是全部给llm占用上下文
-- [ ] 基于harbor的coding agent测试
+- [ ] 上下文管理，短期记忆（summary）和长期记忆（observation）的实现，参考文献：<https://decodeclaude.com/compaction-deep-dive/>
+- [ ] OpenAI API Response适配，参考文档:<https://developers.openai.com/api/reference/resources/responses>,<https://doc.ai-api.chat/openai-responses/>
+- [ ] 支持agent teams，编写领导agent和子agent的prompt，为了充分利用上下文，领导agent在分配任务时应该按照项目上下文来分配，agent之间的通信基于文件系统。参考文献：<https://decodeclaude.com/teams-and-swarms/>
+- [ ] Session的暂停工作流以及memory功能，参考文献：<https://decodeclaude.com/session-memory/>
+- [ ] deepseek/kimi api支持，而不是仅仅支持minimax
+- [ ] 基于harbor的coding agent测试，参考文档：<https://harborframework.com/docs/agents>
+- [ ] 使用pydantic库优化
 ## 安全提示
 
 ⚠️ 请勿将包含 API 密钥的 `.env` 文件提交到版本控制。
