@@ -187,12 +187,13 @@ await session.chat(
 - [x] MCP (Model Context Protocol) 支持
 - [x] 分离显示大模型思考内容和输出内容
 - [x] 按需加载skill
-- [ ] 上下文管理
+- [ ] 上下文管理，短期记忆（summary）和长期记忆（observation）的实现
 - [ ] OpenAI API Response/Anthropic API 适配
-- [ ] 支持agent teams
-- [ ] 消息编辑/重试功能
+- [ ] 支持agent teams，编写领导agent和子agent的prompt，为了充分利用上下文，领导agent在分配任务时应该按照项目上下文来分配
+- [ ] 暂停工作流功能
 - [ ] deepseek/kimi api支持
-
+- [ ] 实现针对所有工具的选择性路由，而不是全部给llm占用上下文
+- [ ] 基于harbor的coding agent测试
 ## 安全提示
 
 ⚠️ 请勿将包含 API 密钥的 `.env` 文件提交到版本控制。
@@ -201,7 +202,9 @@ await session.chat(
 - agent skills 协议 <https://agentskills.io/home>
 - mcp协议 <https://modelcontextprotocol.io/docs/getting-started/intro>
 - opencode <https://github.com/anomalyco/opencode>
-
+- memo技术报告 <https://arxiv.org/abs/2504.19413>
+- minimax api文档 <https://platform.minimaxi.com/docs/api-reference/text-chat>
+- claude code博客 <https://claude.com/blog>
 ## 许可证
 
 MIT License

@@ -1,6 +1,6 @@
 from .config import Config,createOpenAIClient,Message,ToolCall
-from .tool import TOOLS,parseToolArguments, set_mcp_client,_mcp_client,formatted_tool_output,\
-run_bash,run_fetch_url_to_markdown,run_read_file,run_str_replace_file,run_write_file
+from .tool import TOOLS,parse_tool_arguments, set_mcp_client,_mcp_client,formatted_tool_output,\
+run_bash,run_fetch_url_to_markdown,run_read_file,run_str_replace_file,run_write_file,run_glob,run_grep
 from .skill import Skill,load_skills,format_skill_for_prompt,SkillTool,format_one_skill_for_prompt
 from .mcp_client import MCPClient, load_mcp_config_from_env, create_mcp_client_with_config
 from openai import AsyncOpenAI
@@ -36,6 +36,7 @@ def _message_to_dict(m: Message) -> Dict[str, Any]:
 
 class Session:
     def __init__(self, config: Config):
+        self.session_id:str
         self.config:Config = config
         self.workdir: str= config.workdir
         self.history: list[Message] =[]
@@ -45,7 +46,6 @@ class Session:
         self.mcp_client: Optional[MCPClient] = None
         self._all_tools: List[Dict[str, Any]] = list(TOOLS)  # 复制内置工具
         self._init_task=asyncio.create_task(self._initialize_system_prompt(config.skills_dir))
-        
     async def _initialize_system_prompt(self,skills_dir:Optional[str]):
         system_prompt=get_system_prompt()
         if skills_dir:
@@ -121,13 +121,16 @@ class Session:
             console.print(pc_gray("🤖 Thinking...")) 
             stream = await self.client.chat.completions.create(
                 model=self.model,
-                messages=[_message_to_dict(m) for m in self.history],
+                messages=[_message_to_dict(m) for m in self.history],#type: ignore
                 extra_body={"reasoning_split": True},
                 stream=True,
-                tools=self._all_tools,
+                #实际上，claude code针对工具调用进行了优化，除了预先加载的tools，所有的tools（包括mcp tools和skill tools），
+                #都使用懒加载的方式，通过tool search工具获得，然而claude code的tool search是通过服务器端实现的，
+                #也可以通过客户端实现，即tools=tool_search(self._all_tools,user_input)
+                tools=self._all_tools,#type: ignore
                 tool_choice="auto",
                 max_tokens=1024*32
-            )
+            ) #type: ignore
             has_tool_calls = False
             content_buffer = ""
             reasoning_buffer = ""
@@ -187,10 +190,9 @@ class Session:
             # 通知本轮结束 (content, reasoning, has_more)
             if on_turn_end:
                 on_turn_end(content_buffer, reasoning_buffer, has_tool_calls)
-            
             if has_tool_calls and message.tool_calls:
                 for toolcall in message.tool_calls:
-                    args = parseToolArguments(toolcall)
+                    args = parse_tool_arguments(toolcall)
                     tool_name = toolcall.function.name
                     
                     # 通知 tool 开始调用
@@ -270,6 +272,12 @@ class Session:
             elif name == "fetch_url":
                 url=args.get("url","")
                 output=await run_fetch_url_to_markdown(url)
+                return formatted_tool_output(output)
+            elif name== "Glob":
+                output=await run_glob(**args)
+                return formatted_tool_output(output)
+            elif name== "Grep":
+                output=await run_grep(**args)
                 return formatted_tool_output(output)
             else:
                 return f"Error: Unknown tool: {name}"

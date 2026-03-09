@@ -10,7 +10,10 @@ class Config:
     base_url: str  # 改为小写 base_url（PEP8 规范）
     model: str
     workdir: str
-    skills_dir:Optional[str]
+    skills_dir:str
+    mcp_config_path:str
+    memory_compaction_path:str
+
 
 
 def load_config() -> Config:
@@ -21,6 +24,8 @@ def load_config() -> Config:
     model = os.getenv("OPENAI_MODEL", "MiniMax-M2.5")  # 提供默认值
     workdir = os.getenv("WORKDIR") or os.getcwd()      # 提供默认值
     skills_dir = os.getenv("SKILLS_DIR")  # 可选项，无默认值    
+    mcp_config_path=os.getenv("MCP_CONFIG_PATH")
+    memory_compaction_path=os.getenv("MEMORY_COMPACTION_PATH")
     # 验证必需项
     if not api_key:
         raise ValueError("OPENAI_API_KEY environment variable is not set")
@@ -32,7 +37,9 @@ def load_config() -> Config:
         base_url=base_url,
         model=model,
         workdir=workdir,
-        skills_dir=skills_dir
+        skills_dir=skills_dir,
+        mcp_config_path=mcp_config_path,
+        memory_compaction_path=memory_compaction_path
     )
 
 SYSTEM_PROMPT="""

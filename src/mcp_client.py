@@ -307,9 +307,9 @@ class MCPClient:
                 texts.append(f"[Image data: {content.mimeType}]")
             elif content.type == "resource":
                 resource = content.resource
-                if hasattr(resource, 'text') and resource.text:
-                    texts.append(resource.text)
-                elif hasattr(resource, 'blob') and resource.blob:
+                if hasattr(resource, 'text') and resource.text:     #type: ignore
+                    texts.append(resource.text)                     #type: ignore
+                elif hasattr(resource, 'blob') and resource.blob:   #type: ignore
                     texts.append(f"[Binary resource: {resource.mimeType}]")
         
         return "\n".join(texts) if texts else "(empty result)"

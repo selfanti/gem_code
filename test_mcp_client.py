@@ -1,33 +1,10 @@
-from textual.app import App, ComposeResult
-from textual.widgets import Collapsible, Label, Markdown, Static
-
-class MyApp(App):
-    CSS = """
-    Collapsible {
-        width: 100%;
-        margin: 1 0;
-    }
-    Collapsible > .collapsible-title {
-        text-style: bold;
-        color: $accent;
-    }
-    """
-
-    def compose(self) -> ComposeResult:
-        # 默认展开
-        with Collapsible(title="🧠 思考过程 (Reasoning)", collapsed=False):
-            yield Markdown("""
-1. 用户询问的是 Python TUI 框架
-2. Textual 提供了 Collapsible 组件
-3. 适合展示大模型的思考链
-            """)
-        
-        # 默认折叠（适合节省空间）
-        with Collapsible(title="📊 技术详情", collapsed=True):
-            yield Static("Model: GPT-4\nTokens: 1500\nLatency: 2.3s")
-        
-        yield Label("下方是主要内容...")
-
-if __name__ == "__main__":
-    app = MyApp()
-    app.run()
+from ulid import ULID
+# 从当前时间戳创建ULID
+ulid = ULID()
+print(ulid.to_uuid()) # 输出类似于ULID(01E75HZVW36EAZKMF1W7XNMSB4)
+# 使用命名构造函数
+import time, datetime
+ulid_from_timestamp = ULID.from_timestamp(time.time())
+print(ulid_from_timestamp) # 输出类似于ULID(01E75J1MKKWMGG0N5MBHFMRC84)
+ulid_from_datetime = ULID.from_datetime(datetime.datetime.now())
+print(ulid_from_datetime) # 输出类似于ULID(01E75J2XBK390V2XRH44EHC10X)

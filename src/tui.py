@@ -38,7 +38,7 @@ from rich.text import Text
 
 from .config import Config, load_config
 from .session import Session
-
+from .tool import formatted_tool_output
 
 # Performance tuning constants
 BATCH_SIZE: Final[int] = 10          # Update UI every N characters
@@ -370,8 +370,7 @@ class ChatMessageWidget(Static):
         # Tool result if any
         if self.entry.tool_result:
             result_text = self.entry.tool_result
-            if len(result_text) > 500:
-                result_text = result_text[:250] + "\n... [truncated] ...\n" + result_text[-200:]
+            result_text=formatted_tool_output(result_text)
             # Use Text object to avoid Rich markup parsing issues
             text = Text(f"Result:\n{result_text}")
             yield Static(text, classes="tool-result")

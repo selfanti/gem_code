@@ -18,7 +18,7 @@ def on_reasoning(chunk: str):
 
 def on_content(chunk: str):
     """处理正式 content - 使用蓝色"""
-    console.print(Text(chunk, style="blue"), end="")
+    console.print(Text(chunk,style="blue"), end="")
 
 def on_tool_start(tool_name: str, args: dict):
     """处理 tool 开始调用"""
