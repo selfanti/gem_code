@@ -1,18 +1,56 @@
-from openai import OpenAI
- 
-client = OpenAI(
-    api_key="sk-GwJbXTfL0MWw6t0VLszTbbtCS7qiEpQ08X0zUU2EKlIZckFu", # 在这里将 MOONSHOT_API_KEY 替换为你从 Kimi 开放平台申请的 API Key
-    base_url="https://api.moonshot.cn/v1",
+from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime
+from typing import List, Optional
+from enum import Enum
+import json
+
+class Status(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+class Address(BaseModel):
+    city: str
+    street: str
+    zipcode: str
+
+class User(BaseModel):
+    # Pydantic V2 使用 ConfigDict 替代 class Config
+    model_config = ConfigDict(
+        json_encoders={
+            datetime: lambda v: v.strftime('%Y-%m-%d %H:%M:%S')
+        },
+        from_attributes=True
+    )
+    
+    id: int
+    name: str = Field(..., min_length=2, max_length=50)
+    email: Optional[str]=None
+    is_active: bool = True
+    status: Status = Status.ACTIVE
+    created_at: datetime = Field(default_factory=datetime.now)
+    addresses: List[Address] = []
+    metadata: dict = Field(default_factory=dict)
+
+# 使用示例
+user = User(
+    id=1, 
+    name="王五", 
+    addresses=[Address(city="北京", street="长安街", zipcode="100000")]
 )
- 
-completion = client.chat.completions.create(
-    model = "kimi-k2-turbo-preview",
-    messages = [
-        {"role": "system", "content": "你是 Kimi，由 Moonshot AI 提供的人工智能助手，你更擅长中文和英文的对话。你会为用户提供安全，有帮助，准确的回答。同时，你会拒绝一切涉及恐怖主义，种族歧视，黄色暴力等问题的回答。Moonshot AI 为专有名词，不可翻译成其他语言。"},
-        {"role": "user", "content": "你好，详细介绍你自己？"}
-    ],
-    temperature = 0.6,
-)
- 
-# 通过 API 我们获得了 Kimi 大模型给予我们的回复消息（role=assistant）
-print(completion.choices[0].message.content)
+
+# ✅ 方法1：model_dump_json() -> 直接返回 JSON 字符串（推荐）
+json_str = user.model_dump_json(ensure_ascii=False, indent=2)
+print("方法1结果：")
+print(json_str)
+
+# ✅ 方法2：model_dump() + json.dumps() 需要处理 datetime
+dict_obj = user.model_dump()
+# 方法2a：手动处理 datetime（复杂，不推荐）
+# 方法2b：使用 Pydantic 的 json() 方法替代
+json_str2 = user.model_dump_json(ensure_ascii=False)  # 直接使用 model_dump_json
+print("\n方法2结果：")
+print(json_str2)
+
+# 反序列化
+user_parsed = User.model_validate_json(json_str)
+print(f"\n反序列化后：{user_parsed.name}")

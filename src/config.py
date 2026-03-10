@@ -4,6 +4,9 @@ import os
 from dotenv import load_dotenv
 from typing import Optional,List
 from openai import OpenAI, AsyncOpenAI
+from ulid import ULID
+from uuid import UUID
+from pydantic import Field
 @dataclass
 class Config:
     api_key: str
@@ -31,7 +34,12 @@ def load_config() -> Config:
         raise ValueError("OPENAI_API_KEY environment variable is not set")
     if not base_url:
         raise ValueError("OPENAI_BASE_URL environment variable is not set")
-    
+    if not skills_dir:
+        raise ValueError("SKILLS_DIR environment variable is not set")
+    if not mcp_config_path:
+        raise ValueError("MCP_CONFIG_PATH environment variable is not set")
+    if not memory_compaction_path:
+        raise ValueError("MEMORY_COMPACTION_PATH environment variable is not set")
     return Config(
         api_key=api_key,
         base_url=base_url,
@@ -85,9 +93,11 @@ def get_system_prompt() -> str:
 
 Role = Literal["system", "user", "assistant", "tool"]
 @dataclass
-class Message:
+class Message():
+    
     role: Role                    # 必填
     content: Optional[str]       # 必填，但可为 None
+    id:UUID=Field(default_factory=ULID().to_uuid)
     tool_calls: Optional[List] = None  # 可选，默认 None
     tool_call_id: Optional[str] = None # 可选，默认 None
 

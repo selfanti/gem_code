@@ -102,8 +102,9 @@ class Session:
         on_content: Optional[Callable[[str], None]] = None,
         on_tool_start: Optional[Callable[[str, dict], None]] = None,
         on_tool_result: Optional[Callable[[str, str], None]] = None,
-        on_turn_end: Optional[Callable[[str, str, bool], None]] = None
-    ) -> None:
+        on_turn_end: Optional[Callable[[str, str, bool], None]] = None,
+        interface_of_whole_output:Optional[bool] = False
+    ) :
         """
         处理聊天请求，支持 reasoning 和 content 分离输出
         
@@ -185,6 +186,9 @@ class Session:
                 content=content_buffer,
                 tool_calls=list(tool_calls_map.values()) if has_tool_calls else None
             )
+            if interface_of_whole_output:
+                return content_buffer
+
             self.history.append(message)
             
             # 通知本轮结束 (content, reasoning, has_more)
