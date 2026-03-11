@@ -37,7 +37,7 @@ from textual.screen import ModalScreen
 from rich.text import Text
 
 from .config import Config, load_config
-from .session import Session
+from .session_manager import SessionManager
 from .tool import formatted_tool_output
 
 # Performance tuning constants
@@ -664,7 +664,30 @@ class Sidebar(Container):
     
     def __init__(self, config: Config, **kwargs):
         self.config = config
+        self.context_label = None
         super().__init__(**kwargs)
+    
+    def update_context_usage(self, used: int, total: int = 200000) -> None:
+        """Update context usage display"""
+        if self.context_label:
+            percentage = (used / total) * 100
+            # Color coding based on usage
+            if percentage < 60:
+                color = "green"
+            elif percentage < 80:
+                color = "yellow"
+            else:
+                color = "red"
+            
+            # Format numbers (K for thousands)
+            if used >= 1000:
+                used_str = f"{used/1000:.1f}K"
+            else:
+                used_str = str(used)
+            
+            text = Text(f"{used_str} / {total//1000}K ({percentage:.1f}%)")
+            text.stylize(color)
+            self.context_label.update(text)
     
     def compose(self) -> ComposeResult:
         # Logo
@@ -691,6 +714,29 @@ class Sidebar(Container):
             if len(workdir) > 28:
                 workdir = "..." + workdir[-25:]
             yield Label(Text(workdir), classes="info-value")
+        
+        # Tools info
+        with Vertical(classes="section"):
+            yield Label("TOOLS", classes="section-title")
+            tools = [
+                ("🔧", "bash"),
+                ("📖", "read_file"),
+                ("✏️", "write_file"),
+                ("🔄", "StrReplaceFile"),
+                ("🌐", "fetch_url"),
+                ("🔍", "Glob"),
+                ("🔎", "Grep"),
+            ]
+            tool_text = " ".join([f"{icon} {name}" for icon, name in tools[:4]])
+            yield Label(Text(tool_text), classes="info-value")
+            tool_text2 = " ".join([f"{icon} {name}" for icon, name in tools[4:]])
+            yield Label(Text(tool_text2), classes="info-value")
+        
+        # Context usage info
+        with Vertical(classes="section"):
+            yield Label("CONTEXT", classes="section-title")
+            self.context_label = Label(Text("0 / 200K tokens (0%)"), classes="info-value")
+            yield self.context_label
         
         # File tree
         with Vertical(classes="section"):
@@ -828,11 +874,11 @@ class HelpScreen(ModalScreen):
             
             shortcuts = [
                 ("Enter", "Insert new line"),
-                ("Send Button", "Send message"),
+                ("Ctrl+Enter", "Send message"),
                 ("Ctrl+C", "Quit application"),
                 ("Ctrl+L", "Clear chat history"),
                 ("Ctrl+S", "Toggle sidebar"),
-                ("Escape", "Cancel / Focus input"),
+                ("Escape", "Focus input"),
                 ("?", "Show this help"),
             ]
             
@@ -883,7 +929,7 @@ class GemCodeApp(App):
     
     def __init__(self, config: Config):
         self.config = config
-        self.session: Session | None = None
+        self.session_manager: SessionManager | None = None
         self._is_generating = False
         self._sidebar_visible = True
         self._current_tool_widget = None  # Track current tool widget for updates
@@ -891,9 +937,24 @@ class GemCodeApp(App):
     
     async def on_mount(self) -> None:
         """Initialize session when app mounts"""
-        self.session = Session(self.config)
-        await self.session.init()
+        self.session_manager = SessionManager(self.config)
+        await self.session_manager.init()
         self.query_one(StatusBar).status = f"Ready • {self.config.model}"
+        # Set up periodic context usage update (every 2 seconds)
+        self.set_interval(2.0, self._update_context_display)
+    
+    def _update_context_display(self) -> None:
+        """Update context usage display in sidebar and status bar"""
+        if self.session_manager and self.session_manager.session:
+            used = self.session_manager.session.used_context
+            sidebar = self.query_one("#sidebar", Sidebar)
+            sidebar.update_context_usage(used)
+            
+            # Also update status bar with context info
+            status_bar = self.query_one(StatusBar)
+            if not self._is_generating:
+                percentage = (used / 200000) * 100
+                status_bar.status = f"Ready • {self.config.model} • Context: {percentage:.1f}%"
     
     def compose(self) -> ComposeResult:
         with Horizontal(id="main-container"):
@@ -1009,7 +1070,8 @@ class GemCodeApp(App):
                     self._is_generating = False
                     self.query_one("#input-area", InputArea).set_loading(False)
                     self.query_one("#thinking-indicator", ThinkingIndicator).remove_class("visible")
-                    self.query_one(StatusBar).status = "Ready"
+                    # Update context display
+                    self._update_context_display()
             
             def on_tool_start(tool_name: str, args: dict) -> None:
                 """Handle tool call start"""
@@ -1020,7 +1082,7 @@ class GemCodeApp(App):
                 self.post_message(ToolResultMessage(tool_name, result))
             
             # Run the chat
-            await self.session.chat(         #type: ignore
+            await self.session_manager.session.chat(         #type: ignore
                 user_message,
                 on_reasoning=on_reasoning,
                 on_content=on_content,
@@ -1107,6 +1169,8 @@ class GemCodeApp(App):
                 self._current_tool_widget = None
         
         self.query_one(StatusBar).status = "Processing..."
+        # Update context display after tool result
+        self._update_context_display()
     
     def on_input_area_clear_history(self) -> None:
         """Handle clear history request"""
@@ -1114,8 +1178,11 @@ class GemCodeApp(App):
     
     async def action_quit(self) -> None:
         """Quit application with cleanup"""
-        if self.session:
-            await self.session.cleanup()
+        if self.session_manager and self.session_manager.session:
+            try:
+                await self.session_manager.session.cleanup()
+            except Exception:
+                pass  # 忽略清理错误
         self.exit()
     
     def action_clear(self) -> None:
@@ -1123,8 +1190,11 @@ class GemCodeApp(App):
         chat_area = self.query_one("#chat-area", ChatArea)
         chat_area.clear()
         
-        if self.session:
-            self.session.clear_history()
+        if self.session_manager:
+            self.session_manager.session.clear_history()
+            # Reset context display
+            sidebar = self.query_one("#sidebar", Sidebar)
+            sidebar.update_context_usage(0)
         
         self.notify("Chat history cleared", title="Info", severity="information")
     
@@ -1145,10 +1215,18 @@ class GemCodeApp(App):
         self._sidebar_visible = not self._sidebar_visible
         sidebar.display = self._sidebar_visible
     
+    @property
+    def session(self):
+        """Shortcut to access session from session_manager"""
+        return self.session_manager.session if self.session_manager else None
+    
     async def on_unmount(self) -> None:
         """Cleanup when app unmounts"""
-        if self.session:
-            await self.session.cleanup()
+        if self.session_manager and self.session_manager.session:
+            try:
+                await self.session_manager.session.cleanup()
+            except Exception:
+                pass  # 忽略清理错误，确保应用正常退出
 
 
 def run_tui():

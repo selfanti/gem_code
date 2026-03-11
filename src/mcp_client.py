@@ -128,19 +128,27 @@ class MCPClient:
         
         exit_stack = AsyncExitStack()
         
-        # 使用 exit_stack 管理生命周期
-        stdio_transport = await exit_stack.enter_async_context(stdio_client(server_params))
-        stdio_read, stdio_write = stdio_transport
-        
-        session = await exit_stack.enter_async_context(
-            ClientSession(stdio_read, stdio_write)
-        )
-        
-        # 初始化会话
-        await session.initialize()
-        
-        conn.session = session
-        conn._exit_stack = exit_stack
+        try:
+            # 使用 exit_stack 管理生命周期
+            stdio_transport = await exit_stack.enter_async_context(stdio_client(server_params))
+            stdio_read, stdio_write = stdio_transport
+            
+            session = await exit_stack.enter_async_context(
+                ClientSession(stdio_read, stdio_write)
+            )
+            
+            # 初始化会话
+            await session.initialize()
+            
+            conn.session = session
+            conn._exit_stack = exit_stack
+        except Exception:
+            # 连接失败时确保清理
+            try:
+                await exit_stack.aclose()
+            except Exception:
+                pass
+            raise
     
     async def _connect_sse(self, conn: ServerConnection, config: McpRemote) -> None:
         """通过 SSE 连接到远程 MCP 服务器"""
@@ -190,12 +198,16 @@ class MCPClient:
         
         if conn._exit_stack:
             try:
-                await conn._exit_stack.aclose()
+                # 使用 asyncio.wait_for 防止清理时卡住
+                await asyncio.wait_for(conn._exit_stack.aclose(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass  # 超时，继续清理
             except Exception:
                 pass  # 忽略清理错误
         
         conn.session = None
         conn.tools = []
+        conn._exit_stack = None
         conn.status = StatusFailed(status="failed", error="Disconnected")
     
     async def disconnect_server(self, name: str) -> None:

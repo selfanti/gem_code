@@ -1,14 +1,16 @@
 # Gem Code CLI Agent
 
-轻量级 CLI Agent，基于 OpenAI 兼容 API，支持工具调用、MCP 协议和技能扩展。
+轻量级 CLI Agent，基于 OpenAI 兼容 API，支持工具调用、MCP 协议、技能扩展和智能上下文管理。
 
 ## 特性
 
 - 🤖 **多模型支持**：OpenAI 兼容 API（默认 MiniMax-M2.5）
-- 🔌 **MCP 协议**：连接外部工具服务器
-- 🛠️ **内置工具**：Bash、文件读写、字符串替换、URL 抓取
+- 🔌 **MCP 协议**：连接外部工具服务器（Playwright、Fetch、Filesystem 等）
+- 🛠️ **内置工具**：Bash、文件读写、字符串替换、URL 抓取、Glob、Grep
 - 📁 **技能扩展**：通过 SKILL.md 扩展专业能力
 - 💬 **流式响应**：实时显示，支持思考内容分离
+- 🧠 **上下文管理**：智能压缩（microcompaction）和自动摘要（autocompaction）
+- 💾 **会话持久化**：基于 JSONL 的会话存储和恢复
 - 🖥️ **双模式**：TUI（推荐）和 CLI 模式
 
 ## 快速开始
@@ -65,6 +67,17 @@ uv run python main.py "你的问题"  # 一次性提问
 | `?` | 帮助 |
 | `Escape` | 聚焦输入框 |
 
+### TUI 界面说明
+
+侧边栏显示以下信息：
+- **MODEL**: 当前使用的模型和 API
+- **WORKSPACE**: 当前工作目录
+- **TOOLS**: 可用的内置工具列表
+- **CONTEXT**: 实时显示上下文使用量（绿色 <60%，黄色 60-80%，红色 >80%）
+- **FILES**: 工作目录文件树
+
+状态栏显示当前状态、模型名称和上下文使用百分比。
+
 ### 内置工具
 
 | 工具 | 描述 | 参数 |
@@ -73,7 +86,32 @@ uv run python main.py "你的问题"  # 一次性提问
 | `read_file` | 读取文件 | `path`, `description` |
 | `write_file` | 写入文件 | `path`, `content`, `description` |
 | `StrReplaceFile` | 字符串替换 | `path`, `edits` |
-| `fetch_url` | 抓取 URL | `url`, `description` |
+| `fetch_url` | 抓取 URL 内容 | `url`, `description` |
+| `Glob` | 文件搜索 | `pattern`, `path` |
+| `Grep` | 代码搜索 | `pattern`, `path`, `glob`, `output_mode`, `-i`, `-n`, `-B`, `-A`, `-C` |
+
+### 上下文管理
+
+Gem Code 实现了智能上下文管理系统，有效处理长对话：
+
+**Micro Compaction（微观压缩）**
+- 当上下文使用量超过 60% 时自动触发
+- 将早期的工具输出内容转移到持久化存储
+- 保留消息引用，释放上下文空间
+
+**Auto Compaction（自动摘要）**
+- 当上下文使用量超过 80% 时自动触发
+- 使用 LLM 生成对话摘要，包含：
+  - 用户意图和关键决策
+  - 已探索的概念和修改的文件
+  - 遇到的错误和解决方案
+  - 待处理任务和当前状态
+- 添加压缩边界，后续对话基于摘要继续
+
+**会话持久化**
+- 会话自动保存到 `~/.gem_code/memory/{workspace}/{session_id}.jsonl`
+- 支持会话恢复（Fork）和继续
+- O(1) 时间复杂度读取任意历史消息
 
 ### 技能扩展
 
@@ -83,7 +121,9 @@ uv run python main.py "你的问题"  # 一次性提问
 .agent/skills/
 ├── python-best-practices/
 │   └── SKILL.md
-└── react-patterns/
+├── react-patterns/
+│   └── SKILL.md
+└── code-review-excellence/
     └── SKILL.md
 ```
 
@@ -91,12 +131,20 @@ SKILL.md 格式：
 
 ```markdown
 ---
-name: 
-description: 
+name: Python Best Practices
+description: 提供 Python 代码审查和最佳实践建议
 ---
 
-详细说明内容...
+## 代码风格
+- 遵循 PEP 8
+- 使用类型注解
+...
+
+## 常见模式
+...
 ```
+
+Agent 会自动按需加载相关技能，无需手动选择。
 
 ### MCP 配置
 
@@ -108,12 +156,22 @@ description:
     "filesystem": {
       "type": "local",
       "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
-      "enabled": true
+      "enabled": true,
+      "timeout": 30000
     },
     "fetch": {
       "type": "local",
       "command": ["npx", "-y", "@modelcontextprotocol/server-fetch"],
       "enabled": true
+    },
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest"],
+      "environment": {
+        "PLAYWRIGHT_CHROMIUM": "true"
+      },
+      "enabled": true,
+      "timeout": 60000
     }
   }
 }
@@ -121,27 +179,50 @@ description:
 
 常用 MCP 服务器：
 
-| 服务器 | 命令 |
-|--------|------|
-| filesystem | `npx -y @modelcontextprotocol/server-filesystem <path>` |
-| fetch | `npx -y @modelcontextprotocol/server-fetch` |
-| playwright | `npx -y @playwright/mcp@latest` |
+| 服务器 | 命令 | 说明 |
+|--------|------|------|
+| filesystem | `npx -y @modelcontextprotocol/server-filesystem <path>` | 文件系统访问 |
+| fetch | `npx -y @modelcontextprotocol/server-fetch` | HTTP 请求 |
+| playwright | `npx -y @playwright/mcp@latest` | 浏览器自动化（需 Chrome） |
+
+### MCP 前提条件
+
+**Playwright MCP** 需要 Google Chrome：
+
+```bash
+# 方法 1: 系统安装
+wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+sudo apt-get update
+sudo apt-get install -y google-chrome-stable
+
+# 方法 2: Playwright 安装
+npx playwright install chrome
+```
 
 ## 项目结构
 
 ```
 gem-code/
 ├── src/
-│   ├── cli.py          # CLI 模式
-│   ├── tui.py          # TUI 模式（Textual）
-│   ├── session.py      # 对话会话管理
-│   ├── tool.py         # 工具实现
-│   ├── skill.py        # 技能系统
-│   ├── mcp_client.py   # MCP 客户端
-│   └── config.py       # 配置管理
-├── main.py             # 程序入口
-├── mcp_config.json     # MCP 配置
-└── pyproject.toml      # 项目依赖
+│   ├── cli.py              # CLI 模式
+│   ├── tui.py              # TUI 模式（Textual）
+│   ├── session.py          # 对话会话管理
+│   ├── session_manager.py  # 会话生命周期管理
+│   ├── tool.py             # 工具实现
+│   ├── skill.py            # 技能系统
+│   ├── mcp_client.py       # MCP 客户端
+│   ├── mcp.py              # MCP 数据模型
+│   ├── context_manager.py  # 上下文压缩管理
+│   ├── memory.py           # 会话持久化（JsonlRandomAccess）
+│   ├── models.py           # 数据模型（Message, ToolCall 等）
+│   ├── config.py           # 配置管理
+│   ├── decorate.py         # 终端输出装饰
+│   └── agent.py            # Agent 模式（实验性）
+├── main.py                 # 程序入口
+├── mcp_config.json         # MCP 配置
+├── pyproject.toml          # 项目依赖
+└── README.md               # 本文档
 ```
 
 ## 核心组件
@@ -159,6 +240,51 @@ await session.chat(
     on_tool_start=lambda name, args: ...,   # 工具开始
     on_tool_result=lambda name, result: ... # 工具结果
 )
+```
+
+### SessionManager (`session_manager.py`)
+
+管理会话生命周期：
+
+```python
+manager = SessionManager(config)
+await manager.init()
+
+# Fork 新会话（保留历史但创建新 ID）
+manager.fork()
+
+# 恢复已有会话
+manager.resume(session_id)
+```
+
+### Context Manager (`context_manager.py`)
+
+智能上下文管理：
+
+- **阈值**: 最大上下文 200K tokens
+  - 60% 触发 microcompaction
+  - 80% 触发 autocompaction
+- **压缩边界**: 在 JSONL 中标记压缩点
+- **重新激活**: 从摘要恢复完整上下文（rehydration，开发中）
+
+### Memory System (`memory.py`)
+
+基于 JSONL 的持久化存储：
+
+```python
+# Memory_Unit 数据模型
+class Memory_Unit(BaseModel):
+    type: "message" | "compact_boundary" | "summary"
+    role: "system" | "user" | "assistant" | "tool"
+    id: UUID
+    timestamp: datetime
+    content: Optional[str]
+    tool_calls: Optional[list[ToolCall]]
+
+# JsonlRandomAccess - O(1) 读取
+accessor = JsonlRandomAccess(filepath)
+accessor.add_line(memory_unit.model_dump_json())
+message = accessor.get_line(index)
 ```
 
 ## 环境变量
@@ -180,31 +306,52 @@ await session.chat(
 - **MCP**: [mcp](https://github.com/modelcontextprotocol/python-sdk) (>=1.26.0)
 - **TUI**: [Textual](https://textual.textualize.io/) (>=0.85.0)
 - **终端**: Rich (>=14.3.3)
+- **数据验证**: Pydantic (>=2.0)
 
-## TODO
-本项目大体上仿照Claude code和kimicode CLI，kimicode CLI可以参考<https://github.com/MoonshotAI/kimi-cli>
-- [x] TUI 界面
+## 开发状态
+
+本项目参考 Claude Code 和 Kimi CLI 设计：
+<https://github.com/MoonshotAI/kimi-cli>
+
+### 已实现 ✅
+
+- [x] TUI 界面（基于 Textual）
 - [x] MCP (Model Context Protocol) 支持
 - [x] 分离显示大模型思考内容和输出内容
-- [x] 按需加载skill
-- [ ] 上下文管理，短期记忆（summary）和长期记忆（observation）的实现，参考文献：<https://decodeclaude.com/compaction-deep-dive/>
-- [ ] OpenAI API Response适配，参考文档:<https://developers.openai.com/api/reference/resources/responses>,<https://doc.ai-api.chat/openai-responses/>
-- [ ] 支持agent teams，编写领导agent和子agent的prompt，为了充分利用上下文，领导agent在分配任务时应该按照项目上下文来分配，agent之间的通信基于文件系统。参考文献：<https://decodeclaude.com/teams-and-swarms/>
-- [ ] Session的暂停工作流以及memory功能，参考文献：<https://decodeclaude.com/session-memory/>
-- [ ] deepseek/kimi api支持，而不是仅仅支持minimax
-- [ ] 基于harbor的coding agent测试，参考文档：<https://harborframework.com/docs/agents>
-- [ ] 使用pydantic库优化
+- [x] 按需加载 Skill
+- [x] 上下文管理
+  - [x] Microcompaction（工具输出转移）
+  - [x] Autocompaction（自动摘要）
+- [x] 会话持久化（Session Memory）
+- [x] 使用 Pydantic 优化数据模型
+
+### 开发中 🚧
+
+- [ ] OpenAI API Responses 适配
+  - 参考: <https://developers.openai.com/api/reference/resources/responses>
+- [ ] 多 API 支持（DeepSeek、Kimi、OpenAI 等）
+- [ ] Agent Teams（多 Agent 协作）
+  - 领导 Agent 任务分配
+  - 基于文件系统的 Agent 间通信
+  - 参考文献: <https://decodeclaude.com/teams-and-swarms/>
+- [ ] 基于 Harbor 的 Coding Agent 测试
+  - 参考: <https://harborframework.com/docs/agents>
+
 ## 安全提示
 
 ⚠️ 请勿将包含 API 密钥的 `.env` 文件提交到版本控制。
 
-## 参考链接  
-- agent skills 协议 <https://agentskills.io/home>
-- mcp协议 <https://modelcontextprotocol.io/docs/getting-started/intro>
-- opencode <https://github.com/anomalyco/opencode>
-- mem0技术报告 <https://arxiv.org/abs/2504.19413>
-- minimax api文档 <https://platform.minimaxi.com/docs/api-reference/text-chat>
-- claude code博客 <https://claude.com/blog>
+## 参考链接
+
+- Agent Skills 协议: <https://agentskills.io/home>
+- MCP 协议: <https://modelcontextprotocol.io/docs/getting-started/intro>
+- OpenCode: <https://github.com/anomalyco/opencode>
+- Mem0 技术报告: <https://arxiv.org/abs/2504.19413>
+- MiniMax API 文档: <https://platform.minimaxi.com/docs/api-reference/text-chat>
+- Claude Code 博客: <https://claude.com/blog>
+- Claude Code 上下文压缩: <https://decodeclaude.com/compaction-deep-dive/>
+- Claude Code 会话记忆: <https://decodeclaude.com/session-memory/>
+
 ## 许可证
 
 MIT License

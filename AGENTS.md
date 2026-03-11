@@ -103,7 +103,7 @@ uv run python test_openai_response_api.py
 
 - **Streaming Responses**: Real-time streaming of AI responses
 - **Reasoning Split**: Uses `reasoning_split=True` to separate thinking content from final answers
-- **Built-in Tools**: bash, read_file, write_file, StrReplaceFile, fetch_url
+- **Built-in Tools**: bash, read_file, write_file, StrReplaceFile, fetch_url, Glob, Grep
 - **MCP Support**: Model Context Protocol integration for external tool servers
 - **Rich Console Output**: Colored and formatted terminal output
 - **TUI/CLI Modes**: Text UI and Command Line Interface modes
@@ -181,6 +181,27 @@ MCP 服务器可以通过以下方式配置：
 | playwright | `@playwright/mcp` | Browser automation |
 | fetch | `@modelcontextprotocol/server-fetch` | HTTP requests |
 | everything | `@modelcontextprotocol/server-everything` | Demo server |
+
+### MCP Server Prerequisites
+
+#### Playwright MCP
+Playwright MCP server requires **Google Chrome** to be installed on the system:
+
+```bash
+# Ubuntu/Debian
+wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+sudo apt-get update
+sudo apt-get install -y google-chrome-stable
+
+# Or install via Playwright
+npx playwright install chrome
+```
+
+Without Chrome installed, Playwright MCP tools will fail with:
+```
+Error: browserType.launchPersistentContext: Chromium distribution 'chrome' is not found
+```
 
 ### MCP Tool Naming
 

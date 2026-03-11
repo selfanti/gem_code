@@ -71,6 +71,7 @@ class Session:
         message=Message(role="system", content=system_prompt)
         self.history = [message]
         memory_unit = message_to_memory_unit(message, "message")
+        assert memory_unit is not None
         self.memory_acess.add_line(memory_unit.model_dump_json())
     
     async def _init_mcp_client(self) -> None:
@@ -134,6 +135,7 @@ class Session:
         message=Message(role="user", content=user_input)
         self.history.append(message)
         memory_unit = message_to_memory_unit(message, "message")
+        assert memory_unit is not None
         self.memory_acess.add_line(memory_unit.model_dump_json())
         while True:
             console.print(pc_gray("🤖 Thinking...")) 
@@ -213,6 +215,7 @@ class Session:
             )
             self.history.append(message)
             memory_unit = message_to_memory_unit(message, "message")
+            assert memory_unit is not None
             self.memory_acess.add_line(memory_unit.model_dump_json())
 
             self.context_manager.microcompaction(self.history,self.memory_acess)
@@ -248,6 +251,7 @@ class Session:
 
                     self.history.append(message)
                     memory_unit = message_to_memory_unit(message, "message")
+                    assert memory_unit is not None
                     self.memory_acess.add_line(memory_unit.model_dump_json())
                 if not on_tool_start and not on_tool_result:
                     console.print(pc_magenta("🔄 REPEAT"))
@@ -257,6 +261,7 @@ class Session:
         message=Message(role="user", content=user_input)
         self.history.append(message)
         memory_unit = message_to_memory_unit(message, "message")
+        assert memory_unit is not None
         self.memory_acess.add_line(memory_unit.model_dump_json())
         response = self.client.chat.completions.create(
             model=self.model,
@@ -270,6 +275,7 @@ class Session:
             message=Message(role="assistant", content=response.choices[0].message.content)#type: ignore
             self.history.append(message)
             memory_unit = message_to_memory_unit(message, "message")
+            assert memory_unit is not None
             self.memory_acess.add_line(memory_unit.model_dump_json())
 
         return response.choices[0].message.content#type: ignore
@@ -356,9 +362,14 @@ class Session:
     async def cleanup(self) -> None:
         """清理资源，断开 MCP 连接"""
         if self.mcp_client:
-            await self.mcp_client.disconnect_all()
-            set_mcp_client(None)
-            self.mcp_client = None
+            try:
+                await self.mcp_client.disconnect_all()
+            except Exception:
+                # 忽略清理过程中的错误
+                pass
+            finally:
+                set_mcp_client(None)
+                self.mcp_client = None
     
     def get_history(self)->list[Message]:
         return self.history
