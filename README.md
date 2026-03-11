@@ -202,7 +202,7 @@ await session.chat(
 - agent skills 协议 <https://agentskills.io/home>
 - mcp协议 <https://modelcontextprotocol.io/docs/getting-started/intro>
 - opencode <https://github.com/anomalyco/opencode>
-- memo技术报告 <https://arxiv.org/abs/2504.19413>
+- mem0技术报告 <https://arxiv.org/abs/2504.19413>
 - minimax api文档 <https://platform.minimaxi.com/docs/api-reference/text-chat>
 - claude code博客 <https://claude.com/blog>
 ## 许可证

@@ -11,7 +11,9 @@
     "playwright": {
       "type": "local",
       "command": ["npx", "-y", "@playwright/mcp@latest"],
-      "environment": {},
+      "environment": {
+        "PLAYWRIGHT_CHROMIUM": "true"
+      },
       "enabled": true,
       "timeout": 60000
     },

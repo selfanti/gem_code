@@ -1,0 +1,26 @@
+{
+  "name": "gem_code",
+  "version": "1.0.0",
+  "description": "轻量级 CLI Agent，基于 OpenAI 兼容 API，支持工具调用、MCP 协议和技能扩展。",
+  "main": "index.js",
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/selfanti/gem_code.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/selfanti/gem_code/issues"
+  },
+  "homepage": "https://github.com/selfanti/gem_code#readme",
+  "dependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

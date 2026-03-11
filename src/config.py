@@ -2,21 +2,24 @@ from dataclasses import dataclass
 from typing import Literal
 import os
 from dotenv import load_dotenv
-from typing import Optional,List
+from typing import Optional, List
 from openai import OpenAI, AsyncOpenAI
 from ulid import ULID
 from uuid import UUID
-from pydantic import Field
+from pydantic import Field, BaseModel
+from datetime import datetime
+from .models import Role, Message, ToolCall, FunctionCall, Memory_Message_Role
+
+
 @dataclass
 class Config:
     api_key: str
     base_url: str  # 改为小写 base_url（PEP8 规范）
     model: str
     workdir: str
-    skills_dir:str
-    mcp_config_path:str
-    memory_compaction_path:str
-
+    skills_dir: str
+    mcp_config_path: str
+    memory_compaction_path: str
 
 
 def load_config() -> Config:
@@ -26,9 +29,9 @@ def load_config() -> Config:
     base_url = os.getenv("OPENAI_BASE_URL")
     model = os.getenv("OPENAI_MODEL", "MiniMax-M2.5")  # 提供默认值
     workdir = os.getenv("WORKDIR") or os.getcwd()      # 提供默认值
-    skills_dir = os.getenv("SKILLS_DIR")  # 可选项，无默认值    
-    mcp_config_path=os.getenv("MCP_CONFIG_PATH")
-    memory_compaction_path=os.getenv("MEMORY_COMPACTION_PATH")
+    skills_dir = os.getenv("SKILLS_DIR")  # 可选项，无默认值
+    mcp_config_path = os.getenv("MCP_CONFIG_PATH")
+    memory_compaction_path = os.getenv("MEMORY_COMPACTION_PATH")
     # 验证必需项
     if not api_key:
         raise ValueError("OPENAI_API_KEY environment variable is not set")
@@ -50,7 +53,8 @@ def load_config() -> Config:
         memory_compaction_path=memory_compaction_path
     )
 
-SYSTEM_PROMPT="""
+
+SYSTEM_PROMPT = """
 你是 Gem Code，一个轻量级的 CLI Agent。
 
 当前工作目录：{workdir}
@@ -88,29 +92,11 @@ SYSTEM_PROMPT="""
 - 使用完整路径避免混淆
 - 遇到错误时，修复后重试
 """
+
+
 def get_system_prompt() -> str:
-    return SYSTEM_PROMPT.replace('{workdir}',os.getcwd())
+    return SYSTEM_PROMPT.replace('{workdir}', os.getcwd())
 
-Role = Literal["system", "user", "assistant", "tool"]
-@dataclass
-class Message():
-    
-    role: Role                    # 必填
-    content: Optional[str]       # 必填，但可为 None
-    id:UUID=Field(default_factory=ULID().to_uuid)
-    tool_calls: Optional[List] = None  # 可选，默认 None
-    tool_call_id: Optional[str] = None # 可选，默认 None
 
-@dataclass
-class FunctionCall:
-    name:str
-    arguments:str
-@dataclass
-class ToolCall:
-    id:str
-    function:FunctionCall
-    type:str="function"
-def createOpenAIClient(api_key:str, base_url:str) -> AsyncOpenAI:
+def createOpenAIClient(api_key: str, base_url: str) -> AsyncOpenAI:
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
-
-
