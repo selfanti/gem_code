@@ -1,0 +1,84 @@
+{
+    "job_name": "gem-code-swebench-verified-smoke-1-v8",
+    "jobs_dir": "/home/tao/gem_code/evaluation/jobs",
+    "n_attempts": 1,
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": 4.0,
+    "environment_build_timeout_multiplier": null,
+    "debug": true,
+    "orchestrator": {
+        "type": "local",
+        "n_concurrent_trials": 1,
+        "quiet": false,
+        "retry": {
+            "max_retries": 0,
+            "include_exceptions": null,
+            "exclude_exceptions": [
+                "VerifierOutputParseError",
+                "RewardFileNotFoundError",
+                "VerifierTimeoutError",
+                "RewardFileEmptyError",
+                "AgentTimeoutError"
+            ],
+            "wait_multiplier": 1.0,
+            "min_wait_sec": 1.0,
+            "max_wait_sec": 60.0
+        },
+        "kwargs": {}
+    },
+    "environment": {
+        "type": "docker",
+        "import_path": null,
+        "force_build": false,
+        "delete": true,
+        "override_cpus": null,
+        "override_memory_mb": null,
+        "override_storage_mb": null,
+        "override_gpus": null,
+        "suppress_override_warnings": false,
+        "kwargs": {}
+    },
+    "verifier": {
+        "override_timeout_sec": null,
+        "max_timeout_sec": null,
+        "disable": false
+    },
+    "metrics": [],
+    "agents": [
+        {
+            "name": null,
+            "import_path": "evaluation.my_external_agent:GemCodeInstalledAgent",
+            "model_name": "MiniMax-M2.5",
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "kwargs": {
+                "agent_workdir": "/testbed"
+            },
+            "env": {
+                "OPENAI_API_KEY": "sk-cp-skB700jShmK_xDBqn3z7PKsV5tuv1vmfv9ZhTNxLr96dhvT0Y_H31Nf0QFObsTyURcBi8APr7qqLjJedV03Lis2VT0JeBuyWusvEgf0X-1pvQf3Xe2kUZCE",
+                "OPENAI_BASE_URL": "https://api.minimaxi.com/v1",
+                "OPENAI_MODEL": "MiniMax-M2.5"
+            }
+        }
+    ],
+    "datasets": [
+        {
+            "task_names": null,
+            "exclude_task_names": null,
+            "n_tasks": 1,
+            "registry": {
+                "name": null,
+                "url": "https://raw.githubusercontent.com/laude-institute/harbor/main/registry.json"
+            },
+            "name": "swebench-verified",
+            "version": "1.0",
+            "overwrite": false,
+            "download_dir": null
+        }
+    ],
+    "tasks": [],
+    "artifacts": []
+}

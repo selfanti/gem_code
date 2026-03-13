@@ -1,0 +1,52 @@
+{
+    "task": {
+        "path": "datasets/swebench-verified/sympy__sympy-19346",
+        "git_url": "https://github.com/laude-institute/harbor-datasets.git",
+        "git_commit_id": "0d48cdd78e14a1e22afa09abcfc1bf210427d66f",
+        "overwrite": false,
+        "download_dir": null,
+        "source": "swebench-verified"
+    },
+    "trial_name": "sympy__sympy-19346__yh5tP9A",
+    "trials_dir": "/home/tao/gem_code/evaluation/jobs/gem-code-swebench-verified-smoke-1-v8",
+    "timeout_multiplier": 1.0,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": 4.0,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+        "name": null,
+        "import_path": "evaluation.my_external_agent:GemCodeInstalledAgent",
+        "model_name": "MiniMax-M2.5",
+        "override_timeout_sec": null,
+        "override_setup_timeout_sec": null,
+        "max_timeout_sec": null,
+        "kwargs": {
+            "agent_workdir": "/testbed"
+        },
+        "env": {
+            "OPENAI_API_KEY": "sk-cp-skB700jShmK_xDBqn3z7PKsV5tuv1vmfv9ZhTNxLr96dhvT0Y_H31Nf0QFObsTyURcBi8APr7qqLjJedV03Lis2VT0JeBuyWusvEgf0X-1pvQf3Xe2kUZCE",
+            "OPENAI_BASE_URL": "https://api.minimaxi.com/v1",
+            "OPENAI_MODEL": "MiniMax-M2.5"
+        }
+    },
+    "environment": {
+        "type": "docker",
+        "import_path": null,
+        "force_build": false,
+        "delete": true,
+        "override_cpus": null,
+        "override_memory_mb": null,
+        "override_storage_mb": null,
+        "override_gpus": null,
+        "suppress_override_warnings": false,
+        "kwargs": {}
+    },
+    "verifier": {
+        "override_timeout_sec": null,
+        "max_timeout_sec": null,
+        "disable": false
+    },
+    "artifacts": [],
+    "job_id": "86581ea8-78f5-48b2-9b01-35bf7a3dcb7b"
+}

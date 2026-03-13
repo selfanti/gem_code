@@ -1,0 +1,112 @@
+[
+  {
+    "name": "config-defaults",
+    "title": "Optional Config Defaults",
+    "difficulty": "easy",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "config",
+      "defaults"
+    ]
+  },
+  {
+    "name": "context-rehydration",
+    "title": "Context Rehydration",
+    "difficulty": "medium",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "memory",
+      "resume"
+    ]
+  },
+  {
+    "name": "context-token-estimation",
+    "title": "Context Token Estimation",
+    "difficulty": "medium",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "context",
+      "tokens"
+    ]
+  },
+  {
+    "name": "tool-display-formatting",
+    "title": "Tool Display Formatting",
+    "difficulty": "easy",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "tui",
+      "formatting"
+    ]
+  },
+  {
+    "name": "tui-startup-guard",
+    "title": "Headless TUI Guard",
+    "difficulty": "easy",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "tui",
+      "startup"
+    ]
+  },
+  {
+    "name": "jsonl-index-rebuild",
+    "title": "JSONL Index Rebuild",
+    "difficulty": "medium",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "storage",
+      "bugfix"
+    ]
+  },
+  {
+    "name": "responses-history-conversion",
+    "title": "Responses History Conversion",
+    "difficulty": "medium",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "api",
+      "tool-calls"
+    ]
+  },
+  {
+    "name": "session-rebind",
+    "title": "Session Transcript Rebind",
+    "difficulty": "easy",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "session",
+      "state"
+    ]
+  },
+  {
+    "name": "mcp-config-fallbacks",
+    "title": "MCP Config Fallbacks",
+    "difficulty": "medium",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "mcp",
+      "config"
+    ]
+  },
+  {
+    "name": "agent-wrapper",
+    "title": "Minimal Agent Wrapper",
+    "difficulty": "easy",
+    "category": "software_engineering",
+    "tags": [
+      "python",
+      "agent",
+      "async"
+    ]
+  }
+]
