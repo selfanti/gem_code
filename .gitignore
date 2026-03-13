@@ -4,8 +4,6 @@ __pycache__/
 .pytest_cache/
 node_modules/
 *.pyc
-wget-log
-huge_file*.json*
 
 # Ignore directories anywhere in the repository
 .claude/
