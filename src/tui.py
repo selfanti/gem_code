@@ -11,6 +11,7 @@ Performance optimized version:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,9 +35,11 @@ from textual.reactive import reactive
 from textual.binding import Binding
 from textual.message import Message
 from textual.screen import ModalScreen
+from rich.syntax import Syntax
 from rich.text import Text
 
 from .config import Config, load_config
+from .models import ContextUsageSnapshot
 from .session_manager import SessionManager
 from .tool import formatted_tool_output
 
@@ -54,8 +57,47 @@ class ChatEntry:
     timestamp: datetime
     is_tool_call: bool = False
     tool_name: str | None = None
+    tool_args: dict | None = None
     tool_result: str | None = None
     reasoning_content: str | None = None  # 推理/思考内容
+
+
+def _format_tool_args_for_display(args: dict | None) -> str:
+    """Pretty-print tool arguments for the TUI.
+
+    Tool calls are one of the highest-signal events in an agent UI, so the
+    arguments should be easy to scan. We render dictionaries as stable,
+    indented JSON rather than Python's default `repr`, which is harder to read
+    and easier to wrap poorly in a narrow terminal.
+    """
+
+    if not args:
+        return "{}"
+    return json.dumps(args, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _format_tool_result_for_display(result: str) -> tuple[str, str]:
+    """Return `(text, lexer)` for a tool result block.
+
+    We format the stored tool output once, then attempt lightweight syntax
+    detection. JSON results become formatted JSON, while everything else falls
+    back to plain text so shell output still reads cleanly.
+    """
+
+    cleaned = formatted_tool_output(result)
+    stripped = cleaned.strip()
+
+    if stripped:
+        try:
+            parsed = json.loads(stripped)
+            return (
+                json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True),
+                "json",
+            )
+        except Exception:
+            pass
+
+    return cleaned, "text"
 
 
 class ThinkingIndicator(Static):
@@ -306,6 +348,33 @@ class ChatMessageWidget(Static):
         border: solid $warning-darken-2;
         color: $text-muted;
     }
+
+    ChatMessageWidget .tool-summary {
+        width: 100%;
+        height: auto;
+        margin-left: 4;
+        margin-bottom: 1;
+        color: $text-muted;
+        text-style: italic;
+    }
+
+    ChatMessageWidget .tool-block-title {
+        width: 100%;
+        height: auto;
+        margin-left: 4;
+        margin-top: 1;
+        color: $warning;
+        text-style: bold;
+    }
+
+    ChatMessageWidget .tool-code-block {
+        width: 100%;
+        height: auto;
+        margin-left: 4;
+        padding: 1;
+        background: $surface-darken-2;
+        border: solid $warning-darken-2;
+    }
     
     ChatMessageWidget .reasoning-collapsible {
         width: 100%;
@@ -362,18 +431,48 @@ class ChatMessageWidget(Static):
         if self.entry.role == "assistant" and self.entry.reasoning_content:
             with Collapsible(title="🤔 Thinking...", collapsed=True, classes="reasoning-collapsible"):
                 yield Markdown(self.entry.reasoning_content, classes="reasoning-content")
-        
+
+        if self.entry.is_tool_call:
+            # Tool call messages are rendered as structured panels instead of a
+            # single Markdown blob. This makes it much easier to distinguish the
+            # human-readable summary, the exact arguments, and the returned
+            # output while the agent is chaining several tools in a row.
+            if self.entry.content:
+                yield Static(Text(self.entry.content), classes="tool-summary")
+
+            if self.entry.tool_args is not None:
+                yield Static("Arguments", classes="tool-block-title")
+                yield Static(
+                    Syntax(
+                        _format_tool_args_for_display(self.entry.tool_args),
+                        "json",
+                        word_wrap=True,
+                        line_numbers=False,
+                        indent_guides=True,
+                        theme="monokai",
+                    ),
+                    classes="tool-code-block",
+                )
+
+            if self.entry.tool_result:
+                result_text, lexer = _format_tool_result_for_display(self.entry.tool_result)
+                yield Static("Result", classes="tool-block-title")
+                yield Static(
+                    Syntax(
+                        result_text,
+                        lexer,
+                        word_wrap=True,
+                        line_numbers=False,
+                        indent_guides=lexer == "json",
+                        theme="monokai",
+                    ),
+                    classes="tool-code-block",
+                )
+            return
+
         # Message content with Markdown
         content = self.entry.content or ""
         yield Markdown(content, classes="content")
-        
-        # Tool result if any
-        if self.entry.tool_result:
-            result_text = self.entry.tool_result
-            result_text=formatted_tool_output(result_text)
-            # Use Text object to avoid Rich markup parsing issues
-            text = Text(f"Result:\n{result_text}")
-            yield Static(text, classes="tool-result")
 
 
 class ChatArea(VerticalScroll):
@@ -665,29 +764,45 @@ class Sidebar(Container):
     def __init__(self, config: Config, **kwargs):
         self.config = config
         self.context_label = None
+        self.context_detail_label = None
         super().__init__(**kwargs)
     
-    def update_context_usage(self, used: int, total: int = 200000) -> None:
-        """Update context usage display"""
+    def update_context_usage(self, snapshot: ContextUsageSnapshot) -> None:
+        """Update the sidebar with the latest context estimate or server usage."""
+
         if self.context_label:
-            percentage = (used / total) * 100
-            # Color coding based on usage
+            percentage = snapshot.percentage
             if percentage < 60:
                 color = "green"
             elif percentage < 80:
                 color = "yellow"
             else:
                 color = "red"
-            
-            # Format numbers (K for thousands)
-            if used >= 1000:
-                used_str = f"{used/1000:.1f}K"
+
+            if snapshot.used_tokens >= 1000:
+                used_str = f"{snapshot.used_tokens/1000:.1f}K"
             else:
-                used_str = str(used)
-            
-            text = Text(f"{used_str} / {total//1000}K ({percentage:.1f}%)")
+                used_str = str(snapshot.used_tokens)
+
+            source_label = "live" if snapshot.source == "server" else "est"
+            text = Text(
+                f"{used_str} / {snapshot.max_tokens//1000}K ({percentage:.1f}%) [{source_label}]"
+            )
             text.stylize(color)
             self.context_label.update(text)
+
+        if self.context_detail_label:
+            # Expose the estimate breakdown so users can understand whether the
+            # rising number comes from prompt growth, streamed output, or the
+            # static tool schemas attached to every request.
+            detail = Text(
+                "in "
+                f"{snapshot.estimated_input_tokens/1000:.1f}K + out "
+                f"{snapshot.estimated_output_tokens/1000:.1f}K + tools "
+                f"{snapshot.tool_schema_tokens/1000:.1f}K"
+            )
+            detail.stylize("dim")
+            self.context_detail_label.update(detail)
     
     def compose(self) -> ComposeResult:
         # Logo
@@ -735,8 +850,13 @@ class Sidebar(Container):
         # Context usage info
         with Vertical(classes="section"):
             yield Label("CONTEXT", classes="section-title")
-            self.context_label = Label(Text("0 / 200K tokens (0%)"), classes="info-value")
+            self.context_label = Label(Text("0 / 200K (0%) [est]"), classes="info-value")
             yield self.context_label
+            self.context_detail_label = Label(
+                Text("in 0.0K + out 0.0K + tools 0.0K"),
+                classes="info-value",
+            )
+            yield self.context_detail_label
         
         # File tree
         with Vertical(classes="section"):
@@ -936,25 +1056,45 @@ class GemCodeApp(App):
         super().__init__()
     
     async def on_mount(self) -> None:
-        """Initialize session when app mounts"""
-        self.session_manager = SessionManager(self.config)
-        await self.session_manager.init()
-        self.query_one(StatusBar).status = f"Ready • {self.config.model}"
-        # Set up periodic context usage update (every 2 seconds)
-        self.set_interval(2.0, self._update_context_display)
+        """Initialize session state and surface startup failures clearly.
+
+        Textual startup exceptions can be easy to miss because the app switches
+        to an alternate screen. We therefore update the status bar immediately,
+        keep the exception text visible via `notify()`, and then re-raise so the
+        CLI wrapper can print a plain error message as well.
+        """
+
+        try:
+            self.session_manager = SessionManager(self.config)
+            await self.session_manager.init()
+            self.query_one(StatusBar).status = f"Ready • {self.config.model}"
+            # Poll frequently so the context meter visibly changes during
+            # streaming even before the provider sends a final `usage` block.
+            self.set_interval(0.25, self._update_context_display)
+            self._update_context_display()
+        except Exception as exc:
+            self.query_one(StatusBar).status = "Startup error"
+            self.notify(
+                f"TUI startup failed: {exc}",
+                title="Startup Error",
+                severity="error",
+            )
+            raise
     
     def _update_context_display(self) -> None:
         """Update context usage display in sidebar and status bar"""
         if self.session_manager and self.session_manager.session:
-            used = self.session_manager.session.used_context
+            snapshot = self.session_manager.session.get_context_usage_snapshot()
             sidebar = self.query_one("#sidebar", Sidebar)
-            sidebar.update_context_usage(used)
-            
-            # Also update status bar with context info
+            sidebar.update_context_usage(snapshot)
+
             status_bar = self.query_one(StatusBar)
-            if not self._is_generating:
-                percentage = (used / 200000) * 100
-                status_bar.status = f"Ready • {self.config.model} • Context: {percentage:.1f}%"
+            phase = "Generating" if self._is_generating else "Ready"
+            marker = "~" if snapshot.source == "estimated" else ""
+            status_bar.status = (
+                f"{phase} • {self.config.model} • Context: "
+                f"{marker}{snapshot.percentage:.1f}%"
+            )
     
     def compose(self) -> ComposeResult:
         with Horizontal(id="main-container"):
@@ -978,7 +1118,7 @@ class GemCodeApp(App):
     
     async def on_input_area_submitted(self, event: InputArea.Submitted) -> None:
         """Handle user message submission"""
-        if not self.session or self._is_generating:
+        if not self.session_manager or self._is_generating:
             return
         
         user_message = event.value.strip()
@@ -1021,6 +1161,7 @@ class GemCodeApp(App):
             def on_reasoning(chunk: str) -> None:
                 """Handle reasoning content (thinking process)"""
                 turn_state['reasoning'] += chunk
+                self._update_context_display()
             
             def on_content(chunk: str) -> None:
                 """Handle formal content output with batching"""
@@ -1034,6 +1175,7 @@ class GemCodeApp(App):
                     except Exception as e:
                         # Widget may have been removed
                         print(f"Error appending streaming content: {e}")
+                self._update_context_display()
             
             def on_turn_end(content: str, reasoning: str, has_more: bool) -> None:
                 """每次 API 调用结束时调用"""
@@ -1076,10 +1218,12 @@ class GemCodeApp(App):
             def on_tool_start(tool_name: str, args: dict) -> None:
                 """Handle tool call start"""
                 self.post_message(ToolStartMessage(tool_name, args))
+                self._update_context_display()
             
             def on_tool_result(tool_name: str, result: str) -> None:
                 """Handle tool call result"""
                 self.post_message(ToolResultMessage(tool_name, result))
+                self._update_context_display()
             
             # Run the chat
             await self.session_manager.session.chat(         #type: ignore
@@ -1117,23 +1261,19 @@ class GemCodeApp(App):
     def on_tool_start_message(self, message: ToolStartMessage) -> None:
         """Handle tool call start - display tool call in chat"""
         chat_area = self.query_one("#chat-area", ChatArea)
-        
-        # Format args for display
-        args_str = str(message.args) if message.args else ""
-        if len(args_str) > 100:
-            args_str = args_str[:100] + "..."
-        
-        content = f"Calling tool: `{message.tool_name}`"
-        if args_str:
-            content += f"\n```json\n{args_str}\n```"
-        
-        # Create tool call entry
+
+        # Keep the summary short because the detailed arguments are rendered in
+        # a dedicated syntax-highlighted block by `ChatMessageWidget`.
+        arg_count = len(message.args) if message.args else 0
+        content = f"Dispatching structured tool call with {arg_count} argument field(s)."
+
         entry = ChatEntry(
             role="tool",
             content=content,
             timestamp=datetime.now(),
             is_tool_call=True,
             tool_name=message.tool_name,
+            tool_args=message.args,
             tool_result=None  # Will be updated when result arrives
         )
         
@@ -1194,7 +1334,9 @@ class GemCodeApp(App):
             self.session_manager.session.clear_history()
             # Reset context display
             sidebar = self.query_one("#sidebar", Sidebar)
-            sidebar.update_context_usage(0)
+            sidebar.update_context_usage(
+                self.session_manager.session.get_context_usage_snapshot()
+            )
         
         self.notify("Chat history cleared", title="Info", severity="information")
     

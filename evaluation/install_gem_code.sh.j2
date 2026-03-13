@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd /workspace
+
+# Harbor setups run in clean environments, so we install project dependencies as
+# part of agent setup. `uv sync --locked` keeps evaluation environments aligned
+# with the committed lockfile.
+uv sync --locked

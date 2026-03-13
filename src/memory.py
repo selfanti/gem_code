@@ -1,21 +1,20 @@
-from typing import Literal, Optional
-from .models import Role, ToolCall, Message, Memory_Message_Role
+from __future__ import annotations
+
 import json
-import os
-from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
-from ulid import ULID
-from uuid import UUID
 from pathlib import Path
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from ulid import ULID
+
+from .models import Memory_Message_Role, Message, Role, ToolCall
 
 
 class Memory_Unit(BaseModel):
-    model_config = ConfigDict(
-        json_encoders={
-            datetime: lambda v: v.strftime('%Y-%m-%d %H:%M:%S')
-        },
-        from_attributes=True
-    )
+    model_config = ConfigDict(from_attributes=True)
+
     type: Memory_Message_Role
     role: Optional[Role] = None
     id: UUID = Field(default_factory=ULID().to_uuid)
@@ -24,99 +23,179 @@ class Memory_Unit(BaseModel):
     tool_call_id: Optional[str] = None
     tool_calls: Optional[list[ToolCall]] = None
 
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, value: datetime) -> str:
+        # Use ISO 8601 so persisted transcripts stay standards-based and avoid
+        # Pydantic V2's deprecated `json_encoders` path.
+        return value.isoformat()
+
     def to_message(self) -> Message | None:
-        assert self.type == "message"
+        if self.type != "message":
+            return None
         if self.role == "system":
             return Message(role="system", timestamp=self.timestamp, id=self.id, content=self.content)
-        elif self.role == "user":
+        if self.role == "user":
             return Message(role="user", timestamp=self.timestamp, id=self.id, content=self.content)
-        elif self.role == "assistant":
-            return Message(role="assistant", timestamp=self.timestamp, id=self.id, content=self.content, tool_calls=self.tool_calls)
-        elif self.role == "tool":
-            return Message(role="tool", timestamp=self.timestamp, id=self.id, content=self.content, tool_call_id=self.tool_call_id)
+        if self.role == "assistant":
+            return Message(
+                role="assistant",
+                timestamp=self.timestamp,
+                id=self.id,
+                content=self.content,
+                tool_calls=self.tool_calls,
+            )
+        if self.role == "tool":
+            return Message(
+                role="tool",
+                timestamp=self.timestamp,
+                id=self.id,
+                content=self.content,
+                tool_call_id=self.tool_call_id,
+            )
         return None
 
 
-def message_to_memory_unit(message: Message, type: Memory_Message_Role) -> Memory_Unit | None:
-    """将 Message 转换为 Memory_Unit"""
-    if type == "compact_boundary":
+def message_to_memory_unit(message: Message, unit_type: Memory_Message_Role) -> Memory_Unit | None:
+    if unit_type == "compact_boundary":
         return Memory_Unit(type="compact_boundary", timestamp=message.timestamp, id=message.id)
-    elif type == "summary":
+    if unit_type == "summary":
         return Memory_Unit(type="summary", timestamp=message.timestamp, content=message.content, id=message.id)
-    elif type == "message":
+    if unit_type == "message":
         if message.role in ("system", "user"):
-            return Memory_Unit(type="message", timestamp=message.timestamp, id=message.id, role=message.role, content=message.content)
-        elif message.role == "assistant":
-            return Memory_Unit(type="message", timestamp=message.timestamp, id=message.id, role=message.role, content=message.content, tool_calls=message.tool_calls)
-        elif message.role == "tool":
-            return Memory_Unit(type="message", timestamp=message.timestamp, id=message.id, role=message.role, content=message.content, tool_call_id=message.tool_call_id)
+            return Memory_Unit(
+                type="message",
+                timestamp=message.timestamp,
+                id=message.id,
+                role=message.role,
+                content=message.content,
+            )
+        if message.role == "assistant":
+            return Memory_Unit(
+                type="message",
+                timestamp=message.timestamp,
+                id=message.id,
+                role=message.role,
+                content=message.content,
+                tool_calls=message.tool_calls,
+            )
+        if message.role == "tool":
+            return Memory_Unit(
+                type="message",
+                timestamp=message.timestamp,
+                id=message.id,
+                role=message.role,
+                content=message.content,
+                tool_call_id=message.tool_call_id,
+            )
     return None
 
 
 class JsonlRandomAccess:
     def __init__(self, filepath: Path):
         self.filepath = filepath.expanduser()
-        self.offsets = [0]  # 每行起始的字节偏移量
-        self.parent = os.path.dirname(self.filepath)
-        base_path = Path(self.filepath).with_suffix('')  # 去掉原有扩展名
-        self.memory_index_path = f"{base_path}_index.json"
-        # 如果文件存在，重建索引或加载索引
-        if self.filepath.exists():
-            if Path(self.memory_index_path).exists():
-                self.load_memory_index()
-
-    def add_line(self, memory_message: str):
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
-        line = memory_message + "\n"
-        line_bytes = line.encode('utf-8')
-        with open(self.filepath, 'ab') as f:  # ✅ 二进制追加模式
-            start_offset = f.tell()           # 获取当前字节位置
-            f.write(line_bytes)
-        self.save_memory_index()
-        self.offsets.append(start_offset)
-    def get_line(self, line_index: int) -> dict:
-        """O(1) 时间复杂度读取任意行"""
-        if line_index < 0 or line_index >= len(self.offsets):
-            raise IndexError(f"行号 {line_index} 超出范围 [0, {len(self.offsets)-1}]")
+        self.offsets: list[int] = []
+        base_path = self.filepath.with_suffix("")
+        self.memory_index_path = Path(f"{base_path}_index.json")
 
-        with open(self.filepath, 'r', encoding='utf-8') as f:
-            f.seek(self.offsets[line_index])  # 直接跳到指定位置
-            line = f.readline()
-            
+        if self.filepath.exists():
+            if self.memory_index_path.exists():
+                self.load_memory_index()
+            else:
+                self.rebuild_memory_index()
+
+    def rebuild_memory_index(self) -> None:
+        """Re-scan the transcript and rebuild offsets from raw bytes.
+
+        Keeping this fallback avoids corrupting resume behavior when the index
+        file is missing or stale. The old implementation silently initialized the
+        index with `[0]`, which duplicated the first entry on every load.
+        """
+
+        self.offsets = []
+        if not self.filepath.exists():
+            return
+
+        offset = 0
+        with open(self.filepath, "rb") as handle:
+            for line in handle:
+                self.offsets.append(offset)
+                offset += len(line)
+        self.save_memory_index()
+
+    def add_line(self, memory_message: str) -> None:
+        line = memory_message + "\n"
+        line_bytes = line.encode("utf-8")
+        with open(self.filepath, "ab") as handle:
+            start_offset = handle.tell()
+            handle.write(line_bytes)
+        self.offsets.append(start_offset)
+        self.save_memory_index()
+
+    def get_line(self, line_index: int) -> dict:
+        if line_index < 0 or line_index >= len(self.offsets):
+            raise IndexError(f"行号 {line_index} 超出范围 [0, {len(self.offsets) - 1}]")
+
+        with open(self.filepath, "r", encoding="utf-8") as handle:
+            handle.seek(self.offsets[line_index])
+            line = handle.readline()
             return json.loads(line.strip())
 
-    def load_messages(self) -> list[Message] | None:
-        messages = []
-        with open(self.filepath, 'r', encoding='utf-8') as f:
+    def load_messages(self) -> list[Message]:
+        if not self.filepath.exists():
+            return []
+
+        if not self.offsets:
+            self.rebuild_memory_index()
+
+        messages: list[Message] = []
+        with open(self.filepath, "r", encoding="utf-8") as handle:
             for offset in reversed(self.offsets):
-                f.seek(offset)  # 直接跳到指定位置
-                line = f.readline()
+                handle.seek(offset)
+                line = handle.readline()
+                if not line.strip():
+                    continue
                 data = json.loads(line.strip())
-                msg = Memory_Unit.model_validate(data)
-                if msg.type == "compact_boundary":
+                memory_message = Memory_Unit.model_validate(data)
+                if memory_message.type == "compact_boundary":
                     break
-                else:
-                    messages.append(msg.to_message())
+                message = memory_message.to_message()
+                if message is not None:
+                    messages.append(message)
 
         messages.reverse()
         return messages
 
-    def save_memory_index(self):
-        with open(self.memory_index_path, "w", encoding="utf-8") as f:
-            json.dump(self.offsets, f, ensure_ascii=False, indent=2)
+    def load_memory_units(self) -> list[Memory_Unit]:
+        """Load the full transcript as typed memory units.
 
-    def load_memory_index(self):
-        with open(self.memory_index_path, "r", encoding="utf-8") as f:
-            self.offsets = json.load(f)
+        Rehydration needs access to `summary` and `compact_boundary` entries, not
+        just ordinary chat messages. Keeping this helper in the persistence layer
+        avoids re-parsing JSONL in multiple places and guarantees that resume and
+        compaction logic see the same transcript ordering.
+        """
 
+        if not self.filepath.exists():
+            return []
 
-if __name__ == "__main__":
-    # 使用
-    accessor = JsonlRandomAccess(Path("/home/tao/gem_code/huge_file.jsonl"))
-    message = Memory_Unit(type="message", content="thank you i am gem code!\n")
-    for i in range(10):
-        accessor.add_line(message.model_dump_json())
-    accessor.save_memory_index()
-    accessor.load_memory_index()
-    for i in range(10):
-        print(accessor.get_line(i))
+        if not self.offsets:
+            self.rebuild_memory_index()
+
+        units: list[Memory_Unit] = []
+        with open(self.filepath, "r", encoding="utf-8") as handle:
+            for offset in self.offsets:
+                handle.seek(offset)
+                line = handle.readline()
+                if not line.strip():
+                    continue
+                units.append(Memory_Unit.model_validate_json(line))
+
+        return units
+
+    def save_memory_index(self) -> None:
+        with open(self.memory_index_path, "w", encoding="utf-8") as handle:
+            json.dump(self.offsets, handle, ensure_ascii=False, indent=2)
+
+    def load_memory_index(self) -> None:
+        with open(self.memory_index_path, "r", encoding="utf-8") as handle:
+            self.offsets = json.load(handle)

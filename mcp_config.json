@@ -38,6 +38,7 @@
       "_comment": "远程 SSE 服务器示例",
       "type": "remote",
       "url": "http://localhost:3000/sse",
+      "transport": "sse",
       "headers": {
         "Authorization": "Bearer your-token-here"
       },

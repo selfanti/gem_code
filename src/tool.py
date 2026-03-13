@@ -1,341 +1,447 @@
-from typing import Any, Final, Dict, List, Optional
-from rich.console import Console
-from .config import ToolCall,Message
-from .skill import load_skills
-# import openai  # 当前未使用
+from __future__ import annotations
+
+import asyncio
+import copy
+import glob
 import json
 import os
-from trafilatura import fetch_url,extract
+from pathlib import Path
+from typing import Any, Dict, Final, List, Optional
+
 import aiofiles
-# import subprocess  # 已改用 asyncio.create_subprocess_shell
+from rich.console import Console
+from trafilatura import extract, fetch_url
+
 from .mcp_client import MCPClient
-import asyncio
-import glob
-console=Console()
+from .models import ToolCall
+
+console = Console()
+
+
+def _object_schema(
+    properties: Dict[str, Any],
+    required: List[str],
+) -> Dict[str, Any]:
+    """Build a JSON schema that rejects undeclared keys.
+
+    Detailed schemas reduce hallucinated arguments and line up with OpenAI's
+    current tool-calling guidance. We avoid `strict: true` at the transport
+    layer because this project targets OpenAI-compatible providers whose schema
+    support varies, but we still make the input contract explicit here.
+    """
+
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "required": required,
+    }
+
 
 TOOLS: Final[List[Dict[str, Any]]] = [
     {
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.\n\nBefore executing the command, please follow these steps:\n\n1. Directory Verification:\n   - If the command will create new directories or files, first use the LS tool to verify the parent directory exists and is the correct location\n   - For example, before running \"mkdir foo/bar\", first use LS to check that \"foo\" exists and is the intended parent directory\n\n2. Command Execution:\n   - Always quote file paths that contain spaces with double quotes (e.g., cd \"path with spaces/file.txt\")\n   - Examples of proper quoting:\n     - cd \"/Users/name/My Documents\" (correct)\n     - cd /Users/name/My Documents (incorrect - will fail)\n     - python \"/path/with spaces/script.py\" (correct)\n     - python /path/with spaces/script.py (incorrect - will fail)\n   - After ensuring proper quoting, execute the command.\n   - Capture the output of the command.\n\nUsage notes:\n  - The command argument is required.\n  - You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 120000ms (2 minutes).\n  - It is very helpful if you write a clear, concise description of what this command does in 5-10 words.\n  - If the output exceeds 30000 characters, output will be truncated before being returned to you.\n  - You can use the `run_in_background` parameter to run the command in the background, which allows you to continue working while the command runs. You can monitor the output using the Bash tool as it becomes available. Never use `run_in_background` to run 'sleep' as it will return immediately. You do not need to use '&' at the end of the command when using this parameter.\n  - VERY IMPORTANT: You MUST avoid using search commands like `find` and `grep`. Instead use Grep, Glob, or Task to search. You MUST avoid read tools like `cat`, `head`, `tail`, and `ls`, and use Read and LS to read files.\n - If you _still_ need to run `grep`, STOP. ALWAYS USE ripgrep at `rg` first, which all Claude Code users have pre-installed.\n  - When issuing multiple commands, use the ';' or '&&' operator to separate them. DO NOT use newlines (newlines are ok in quoted strings).\n  - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of `cd`. You may use `cd` if the User explicitly requests it.\n    <good-example>\n    pytest /foo/bar/tests\n    </good-example>\n    <bad-example>\n    cd /foo/bar && pytest tests\n    </bad-example>\n\n\n# Committing changes with git\n\nWhen the user asks you to create a new git commit, follow these steps carefully:\n\n1. You have the capability to call multiple tools in a single response. When multiple independent pieces of information are requested, batch your tool calls together for optimal performance. ALWAYS run the following bash commands in parallel, each using the Bash tool:\n  - Run a git status command to see all untracked files.\n  - Run a git diff command to see both staged and unstaged changes that will be committed.\n  - Run a git log command to see recent commit messages, so that you can follow this repository's commit message style.\n2. Analyze all staged changes (both previously staged and newly added) and draft a commit message:\n  - Summarize the nature of the changes (eg. new feature, enhancement to an existing feature, bug fix, refactoring, test, docs, etc.). Ensure the message accurately reflects the changes and their purpose (i.e. \"add\" means a wholly new feature, \"update\" means an enhancement to an existing feature, \"fix\" means a bug fix, etc.).\n  - Check for any sensitive information that shouldn't be committed\n  - Draft a concise (1-2 sentences) commit message that focuses on the \"why\" rather than the \"what\"\n  - Ensure it accurately reflects the changes and their purpose\n3. You have the capability to call multiple tools in a single response. When multiple independent pieces of information are requested, batch your tool calls together for optimal performance. ALWAYS run the following commands in parallel:\n   - Add relevant untracked files to the staging area.\n   - Create the commit with a message ending with:\n   🤖 Generated with [Claude Code](https://claude.ai/code)\n\n   Co-Authored-By: Claude <noreply@anthropic.com>\n   - Run git status to make sure the commit succeeded.\n4. If the commit fails due to pre-commit hook changes, retry the commit ONCE to include these automated changes. If it fails again, it usually means a pre-commit hook is preventing the commit. If the commit succeeds but you notice that files were modified by the pre-commit hook, you MUST amend your commit to include them.\n\nImportant notes:\n- NEVER update the git config\n- NEVER run additional commands to read or explore code, besides git bash commands\n- NEVER use the TodoWrite or Task tools\n- DO NOT push to the remote repository unless the user explicitly asks you to do so\n- IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.\n- If there are no changes to commit (i.e., no untracked files and no modifications), do not create an empty commit\n- In order to ensure good formatting, ALWAYS pass the commit message via a HEREDOC, a la this example:\n<example>\ngit commit -m \"$(cat <<'EOF'\n   Commit message here.\n\n   🤖 Generated with [Claude Code](https://claude.ai/code)\n\n   Co-Authored-By: Claude <noreply@anthropic.com>\n   EOF\n   )\"\n</example>\n\n# Creating pull requests\nUse the gh command via the Bash tool for ALL GitHub-related tasks including working with issues, pull requests, checks, and releases. If given a Github URL use the gh command to get the information needed.\n\nIMPORTANT: When the user asks you to create a pull request, follow these steps carefully:\n\n1. You have the capability to call multiple tools in a single response. When multiple independent pieces of information are requested, batch your tool calls together for optimal performance. ALWAYS run the following bash commands in parallel using the Bash tool, in order to understand the current state of the branch since it diverged from the main branch:\n   - Run a git status command to see all untracked files\n   - Run a git diff command to see both staged and unstaged changes that will be committed\n   - Check if the current branch tracks a remote branch and is up to date with the remote, so you know if you need to push to the remote\n   - Run a git log command and `git diff [base-branch]...HEAD` to understand the full commit history for the current branch (from the time it diverged from the base branch)\n2. Analyze all changes that will be included in the pull request, making sure to look at all relevant commits (NOT just the latest commit, but ALL commits that will be included in the pull request!!!), and draft a pull request summary\n3. You have the capability to call multiple tools in a single response. When multiple independent pieces of information are requested, batch your tool calls together for optimal performance. ALWAYS run the following commands in parallel:\n   - Create new branch if needed\n   - Push to remote with -u flag if needed\n   - Create PR using gh pr create with the format below. Use a HEREDOC to pass the body to ensure correct formatting.\n<example>\ngh pr create --title \"the pr title\" --body \"$(cat <<'EOF'\n## Summary\n<1-3 bullet points>\n\n## Test plan\n[Checklist of TODOs for testing the pull request...]\n\n🤖 Generated with [Claude Code](https://claude.ai/code)\nEOF\n)\"\n</example>\n\nImportant:\n- NEVER update the git config\n- DO NOT use the TodoWrite or Task tools\n- Return the PR URL when you're done, so the user can see it\n\n# Other common operations\n- View comments on a Github PR: gh api repos/foo/bar/pulls/123/comments",
-            "parameters": {
-                "type": "object",
-                "properties": {
+            "description": (
+                "Execute a shell command once inside the configured working "
+                "directory and return stdout, stderr, and the exit code."
+            ),
+            "parameters": _object_schema(
+                {
                     "command": {
                         "type": "string",
-                        "description": "The command to execute"
+                        "description": "The shell command to execute.",
                     },
                     "description": {
                         "type": "string",
-                        "description": "Brief description of what this command does in 5-10 words"
-                    }
+                        "description": "A short reason for running the command.",
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": (
+                            "Optional timeout in milliseconds. Defaults to "
+                            "120000 and is capped at 600000."
+                        ),
+                    },
                 },
-                "required": ["command", "description"]
-            }
-        }
+                ["command", "description"],
+            ),
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file",
-            "parameters": {
-                "type": "object",
-                "properties": {
+            "description": "Read a text file from inside the working directory.",
+            "parameters": _object_schema(
+                {
                     "path": {
                         "type": "string",
-                        "description": "The file path to read"
+                        "description": "Path relative to the working directory.",
                     },
                     "description": {
                         "type": "string",
-                        "description": "Brief description of why you're reading this file"
-                    }
+                        "description": "A short reason for reading the file.",
+                    },
                 },
-                "required": ["path", "description"]
-            }
-        }
+                ["path", "description"],
+            ),
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a file",
-            "parameters": {
-                "type": "object",
-                "properties": {
+            "description": "Write text content to a file inside the working directory.",
+            "parameters": _object_schema(
+                {
                     "path": {
                         "type": "string",
-                        "description": "The file path to write to"
+                        "description": "Path relative to the working directory.",
                     },
                     "content": {
                         "type": "string",
-                        "description": "The content to write to the file"
+                        "description": "The complete file content to write.",
                     },
                     "description": {
                         "type": "string",
-                        "description": "Brief description of why you're writing to this file"
-                    }
+                        "description": "A short reason for writing the file.",
+                    },
                 },
-                "required": ["path", "content", "description"]
-            }
-        }
+                ["path", "content", "description"],
+            ),
+        },
     },
     {
-        "type":"function",
-        "function":{
-            "name":"StrReplaceFile",
-            "description":"Replace content in a file based on string matching",
-            "parameters":{
-                "type":"object",
-                "properties":{
-                    "path":{
-                        "type":"string",
-                        "description":"The file path to operate on"
+        "type": "function",
+        "function": {
+            "name": "StrReplaceFile",
+            "description": "Replace specific strings in a text file inside the working directory.",
+            "parameters": _object_schema(
+                {
+                    "path": {
+                        "type": "string",
+                        "description": "Path relative to the working directory.",
                     },
-                    "edits":{
-                        "type":"array",
-                        "description":"List of the dictionaries of the key of 'target' to perform and the value of the 'replacement'",
-                        "items":{
-                            "type":"object",
-                            "properties":{
-                                "target":{
-                                    "type":"string",
-                                    "description":"The string to be replaced"
+                    "edits": {
+                        "type": "array",
+                        "description": "Ordered string replacements to apply once each.",
+                        "items": _object_schema(
+                            {
+                                "target": {
+                                    "type": "string",
+                                    "description": "The text to replace.",
                                 },
-                                "replacement":{
-                                    "type":"string",
-                                    "description":"The string to replace with"
-                                }
+                                "replacement": {
+                                    "type": "string",
+                                    "description": "Replacement text.",
+                                },
                             },
-                            "required":["target","replacement"]
-                        }
+                            ["target", "replacement"],
+                        ),
                     },
-                    "description":{
+                    "description": {
                         "type": "string",
-                        "description": "Brief description of why do you replace the content of this file"
-                    }
+                        "description": "A short reason for editing the file.",
+                    },
                 },
-                "required":["path","edits","description"]
-            }
-        }
+                ["path", "edits", "description"],
+            ),
+        },
     },
     {
-        "type":"function",
-        "function":{
-            "name":"fetch_url",
-            "description":"Fetch content of the url, output is Markdown format",
-            "parameters":{
-                "type":"object",
-                "properties":{
-                    "url":{
-                        "type":"string",
-                        "description":"The url to fetch content"
-                    },
-                    "description":{
+        "type": "function",
+        "function": {
+            "name": "fetch_url",
+            "description": "Fetch a URL and extract readable Markdown content.",
+            "parameters": _object_schema(
+                {
+                    "url": {
                         "type": "string",
-                        "description": "Brief description of what do you get about the content of this url"
-                    }
+                        "description": "The URL to fetch.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "A short reason for fetching the URL.",
+                    },
                 },
-                "required":["url","description"]
-            }
-        }
-    },
-     {
-        "type":"function",
-        "function":{
-      "name": "Glob",
-      "description": "- Fast file pattern matching tool that works with any codebase size\n- Supports glob patterns like \"**/*.js\" or \"src/**/*.ts\"\n- Returns matching file paths sorted by modification time\n- Use this tool when you need to find files by name patterns\n- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead\n- You have the capability to call multiple tools in a single response. It is always better to speculatively perform multiple searches as a batch that are potentially useful.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "pattern": {
-            "type": "string",
-            "description": "The glob pattern to match files against"
-          },
-          "path": {
-            "type": "string",
-            "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
-          }
+                ["url", "description"],
+            ),
         },
-        "required": ["pattern"]
-       
-      }
-    }
     },
-    {"type":"function",
-        "function":{
-      "name": "Grep",
-      "description": "A powerful search tool built on ripgrep\n\n  Usage:\n  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.\n  - Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\")\n  - Filter files with glob parameter (e.g., \"*.js\", \"**/*.tsx\") or type parameter (e.g., \"js\", \"py\", \"rust\")\n  - Output modes: \"content\" shows matching lines, \"files_with_matches\" shows only file paths (default), \"count\" shows match counts\n  - Use Task tool for open-ended searches requiring multiple rounds\n  - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use `interface\\{\\}` to find `interface{}` in Go code)\n  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \\{[\\s\\S]*?field`, use `multiline: true`\n",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "pattern": {
-            "type": "string",
-            "description": "The regular expression pattern to search for in file contents"
-          },
-          "path": {
-            "type": "string",
-            "description": "File or directory to search in (rg PATH). Defaults to current working directory."
-          },
-          "glob": {
-            "type": "string",
-            "description": "Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\") - maps to rg --glob"
-          },
-          "output_mode": {
-            "type": "string",
-            "enum": [
-              "content",
-              "files_with_matches",
-              "count"
-            ],
-            "description": "Output mode: \"content\" shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), \"files_with_matches\" shows file paths (supports head_limit), \"count\" shows match counts (supports head_limit). Defaults to \"files_with_matches\"."
-          },
-          "-B": {
-            "type": "number",
-            "description": "Number of lines to show before each match (rg -B). Requires output_mode: \"content\", ignored otherwise."
-          },
-          "-A": {
-            "type": "number",
-            "description": "Number of lines to show after each match (rg -A). Requires output_mode: \"content\", ignored otherwise."
-          },
-          "-C": {
-            "type": "number",
-            "description": "Number of lines to show before and after each match (rg -C). Requires output_mode: \"content\", ignored otherwise."
-          },
-          "-n": {
-            "type": "boolean",
-            "description": "Show line numbers in output (rg -n). Requires output_mode: \"content\", ignored otherwise."
-          },
-          "-i": {
-            "type": "boolean",
-            "description": "Case insensitive search (rg -i)"
-          },
-          "type": {
-            "type": "string",
-            "description": "File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types."
-          },
-          "head_limit": {
-            "type": "number",
-            "description": "Limit output to first N lines/entries, equivalent to \"| head -N\". Works across all output modes: content (limits output lines), files_with_matches (limits file paths), count (limits count entries). When unspecified, shows all results from ripgrep."
-          },
-          "multiline": {
-            "type": "boolean",
-            "description": "Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false."
-          }
+    {
+        "type": "function",
+        "function": {
+            "name": "Glob",
+            "description": "Match files under the working directory using a glob pattern.",
+            "parameters": _object_schema(
+                {
+                    "pattern": {
+                        "type": "string",
+                        "description": "A glob pattern such as '**/*.py'.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Optional subdirectory relative to the working "
+                            "directory in which to start the search."
+                        ),
+                    },
+                },
+                ["pattern"],
+            ),
         },
-        "required": ["pattern"]
-      }
-    }
-}
-   
-
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "Grep",
+            "description": "Search file contents with ripgrep under the working directory.",
+            "parameters": _object_schema(
+                {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regular expression pattern to search for.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional file or directory relative to the working directory.",
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Optional ripgrep --glob filter.",
+                    },
+                    "output_mode": {
+                        "type": "string",
+                        "enum": ["content", "files_with_matches", "count"],
+                    },
+                    "-B": {
+                        "type": "integer",
+                        "description": "Lines of context before each match.",
+                    },
+                    "-A": {
+                        "type": "integer",
+                        "description": "Lines of context after each match.",
+                    },
+                    "-C": {
+                        "type": "integer",
+                        "description": "Lines of context before and after each match.",
+                    },
+                    "-n": {
+                        "type": "boolean",
+                        "description": "Show line numbers in content mode.",
+                    },
+                    "-i": {
+                        "type": "boolean",
+                        "description": "Case-insensitive matching.",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Optional ripgrep file type filter.",
+                    },
+                    "head_limit": {
+                        "type": "integer",
+                        "description": "Limit the number of output lines or entries.",
+                    },
+                    "multiline": {
+                        "type": "boolean",
+                        "description": "Enable multiline mode.",
+                    },
+                },
+                ["pattern"],
+            ),
+        },
+    },
 ]
-# MCP 客户端实例（将在 Session 中初始化）
+
+
 _mcp_client: Optional[MCPClient] = None
 
+
 def set_mcp_client(client: Optional[MCPClient]) -> None:
-    """设置全局 MCP 客户端实例"""
     global _mcp_client
     _mcp_client = client
 
+
 def get_mcp_client() -> Optional[MCPClient]:
-    """获取全局 MCP 客户端实例"""
     return _mcp_client
 
 
-async def run_bash(command: str, workdir: str) -> str:
-    # Execute shell command in the specified working directory asynchronously
+def clone_tools() -> List[Dict[str, Any]]:
+    """Return a deep copy so sessions can safely append MCP and skill tools."""
+
+    return copy.deepcopy(TOOLS)
+
+
+def _workdir_root(workdir: str) -> Path:
+    return Path(workdir).expanduser().resolve()
+
+
+def _resolve_path_in_workdir(
+    workdir: str,
+    path: str,
+    *,
+    allow_create: bool = False,
+    require_directory: bool = False,
+) -> Path:
+    """Resolve a user-supplied path without letting it escape the workspace.
+
+    Coding agents need a hard filesystem boundary. Joining strings with
+    `os.path.join()` is not enough because `../` segments and absolute paths can
+    silently escape the intended root. We resolve both the workspace root and
+    candidate path, then verify the candidate stays underneath the root.
+    """
+
+    root = _workdir_root(workdir)
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+
+    resolved = candidate.resolve(strict=not allow_create)
+
+    if resolved != root and root not in resolved.parents:
+        raise ValueError(
+            f"Refusing to access path outside workdir: {resolved} is not within {root}"
+        )
+
+    if require_directory and not resolved.is_dir():
+        raise ValueError(f"Expected a directory path, got: {resolved}")
+
+    return resolved
+
+
+def _format_subprocess_result(
+    command: str,
+    exit_code: int,
+    stdout: bytes,
+    stderr: bytes,
+) -> str:
+    stdout_text = stdout.decode("utf-8", errors="replace").strip()
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    parts = [f"$ {command}", f"[exit_code={exit_code}]"]
+    if stdout_text:
+        parts.append(stdout_text)
+    if stderr_text:
+        parts.append(f"[stderr]\n{stderr_text}")
+    if not stdout_text and not stderr_text:
+        parts.append("(empty output)")
+    return "\n".join(parts)
+
+
+async def run_bash(command: str, workdir: str, timeout_ms: int = 120000) -> str:
+    """Execute a single shell command with an enforced timeout.
+
+    The previous implementation advertised timeouts and structured execution in
+    the tool schema but ignored both at runtime. Returning the command and exit
+    code makes failures debuggable for both humans and the model.
+    """
+
+    timeout_ms = max(1, min(timeout_ms, 600000))
     proc = await asyncio.create_subprocess_shell(
         command,
-        cwd=os.path.expanduser(workdir),
+        cwd=str(_workdir_root(workdir)),
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
-    result = stdout.decode('utf-8', errors='replace') if stdout else (stderr.decode('utf-8', errors='replace') if stderr else "(empty output)")
-    return result
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=timeout_ms / 1000,
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        stdout, stderr = await proc.communicate()
+        timeout_result = _format_subprocess_result(command, -1, stdout, stderr)
+        return f"{timeout_result}\n[timeout_ms={timeout_ms}] Command timed out."
+
+    return _format_subprocess_result(command, proc.returncode or 0, stdout, stderr)
+
+
 async def run_read_file(path: str, workdir: str) -> str:
-    file_path = os.path.join(os.path.expanduser(workdir), path)
-    try:
-        async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-            return await f.read()
-    except Exception as e:
-        return f"Error reading file {file_path}: {str(e)}"
+    file_path = _resolve_path_in_workdir(workdir, path)
+    async with aiofiles.open(file_path, "r", encoding="utf-8") as handle:
+        return await handle.read()
+
+
 async def run_write_file(path: str, content: str, workdir: str) -> str:
-    file_path = os.path.join(os.path.expanduser(workdir), path)
-    try:
-        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
-            await f.write(content)
-        return f"Successfully wrote to {file_path}"
-    except Exception as e:
-        return f"Error writing to file {file_path}: {str(e)}"
+    file_path = _resolve_path_in_workdir(workdir, path, allow_create=True)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    async with aiofiles.open(file_path, "w", encoding="utf-8") as handle:
+        await handle.write(content)
+    return f"Successfully wrote {len(content)} characters to {file_path}"
+
+
 async def run_str_replace_file(path: str, edits: List[Dict[str, str]], workdir: str) -> str:
-    file_path = os.path.join(os.path.expanduser(workdir), path)
-    try:
-        async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
-            content = await f.read()
-        
-        for edit in edits:
-            target = edit.get("target", "")
-            replacement = edit.get("replacement", "")
-            content = content.replace(target, replacement, 1)
-        
-        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
-            await f.write(content)
-        
-        return f"Successfully performed string replacements in {file_path}"
-    except Exception as e:
-        return f"Error performing string replacements in file {file_path}: {str(e)}"
+    """Apply deterministic single replacements and fail loudly on missing targets.
+
+    Silent no-op replacements are dangerous for coding agents because the model
+    believes it edited the file while the source tree remains unchanged.
+    """
+
+    file_path = _resolve_path_in_workdir(workdir, path)
+    async with aiofiles.open(file_path, "r", encoding="utf-8") as handle:
+        content = await handle.read()
+
+    for edit in edits:
+        target = edit.get("target", "")
+        replacement = edit.get("replacement", "")
+        if target not in content:
+            raise ValueError(f"Target text not found in {file_path}: {target!r}")
+        content = content.replace(target, replacement, 1)
+
+    async with aiofiles.open(file_path, "w", encoding="utf-8") as handle:
+        await handle.write(content)
+
+    return f"Successfully applied {len(edits)} replacement(s) to {file_path}"
+
+
 async def run_fetch_url_to_markdown(url: str) -> str:
     try:
-        # Run blocking trafilatura operations in thread pool
         downloaded = await asyncio.to_thread(fetch_url, url)
         if not downloaded:
             return f"Failed to fetch URL {url}: No content received"
         result = await asyncio.to_thread(
-            extract, 
-            downloaded, 
-            output_format="markdown", 
-            include_comments=False
+            extract,
+            downloaded,
+            output_format="markdown",
+            include_comments=False,
         )
         return result if result else ""
-    except Exception as e:
-        return f"Failed to fetch the url {url}: {str(e)}"
+    except Exception as exc:
+        return f"Failed to fetch the url {url}: {str(exc)}"
+
+
 async def run_glob(pattern: str, workdir: str, path: Optional[str] = None) -> str:
-    """
-    Fast file pattern matching tool that works with any codebase size.
-    Supports glob patterns like "**/*.js" or "src/**/*.ts".
-    Returns matching file paths sorted by modification time.
-    """
-    # 确定搜索目录
-    if path:
-        search_dir = os.path.join(os.path.expanduser(workdir), path)
-    else:
-        search_dir = os.path.expanduser(workdir)
-    
-    try:
-        def do_glob():
-            # 如果 pattern 是绝对路径或相对路径前缀，直接使用；否则拼接
-            if os.path.isabs(pattern) or pattern.startswith('./') or pattern.startswith('../'):
-                full_pattern = pattern
-            else:
-                full_pattern = os.path.join(search_dir, pattern)
-            
-            # 执行 glob 搜索（递归模式）
-            matches = glob.glob(full_pattern, recursive=True)
-            
-            # 按修改时间排序（最新的在前）
-            matches.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-            return matches
-        
-        # 在线程池中执行以避免阻塞事件循环
-        matches = await asyncio.to_thread(do_glob)
-        
-        return "\n".join(matches) if matches else ""
-        
-    except Exception as e:
-        return f"Error globbing pattern '{pattern}': {str(e)}"
+    """Run a recursive glob search without allowing directory escape."""
+
+    search_dir = (
+        _resolve_path_in_workdir(workdir, path, require_directory=True)
+        if path
+        else _workdir_root(workdir)
+    )
+
+    if os.path.isabs(pattern):
+        raise ValueError("Glob patterns must be relative to the working directory")
+
+    def do_glob() -> List[str]:
+        full_pattern = str(search_dir / pattern)
+        matches = [
+            str(Path(match).resolve())
+            for match in glob.glob(full_pattern, recursive=True)
+            if Path(match).exists()
+        ]
+        matches = [
+            match
+            for match in matches
+            if _workdir_root(workdir) in Path(match).parents or Path(match) == _workdir_root(workdir)
+        ]
+        matches.sort(key=lambda item: os.path.getmtime(item), reverse=True)
+        return matches
+
+    matches = await asyncio.to_thread(do_glob)
+    return "\n".join(matches) if matches else ""
 
 
 async def run_grep(
@@ -351,35 +457,24 @@ async def run_grep(
     after_context: int = 0,
     context: int = 0,
     head_limit: Optional[int] = None,
-    multiline: bool = False
+    multiline: bool = False,
 ) -> str:
-    """
-    A powerful search tool built on ripgrep.
-    """
-    # 确定搜索路径
-    if path:
-        search_path = os.path.join(os.path.expanduser(workdir), path)
-    else:
-        search_path = os.path.expanduser(workdir)
-    
-    # 构建 ripgrep 命令
+    search_path = (
+        _resolve_path_in_workdir(workdir, path)
+        if path
+        else _workdir_root(workdir)
+    )
+
     cmd = ["rg"]
-    
-    # 输出模式映射
+
     if output_mode == "files_with_matches":
         cmd.append("-l")
     elif output_mode == "count":
         cmd.append("-c")
-    elif output_mode == "content":
-        pass  # rg 默认输出详细内容
-    else:
-        cmd.append("-l")  # 默认
-    
-    # 搜索选项映射（对应 JSON 中的 -i, -n, -B, -A, -C）
+
     if case_insensitive:
         cmd.append("-i")
-    
-    # 以下选项仅在 content 模式下有效
+
     if output_mode == "content":
         if show_line_numbers:
             cmd.append("-n")
@@ -389,92 +484,62 @@ async def run_grep(
             cmd.extend(["-A", str(after_context)])
         if context > 0:
             cmd.extend(["-C", str(context)])
-    
-    # 多行模式（对应 rg -U --multiline-dotall）
+
     if multiline:
-        cmd.append("-U")
-    
-    # 文件过滤（对应 JSON 中的 glob 和 type）
+        # `-U` enables multiline search and `--multiline-dotall` lets `.`
+        # consume newlines, which matches ripgrep's documented behavior.
+        cmd.extend(["-U", "--multiline-dotall"])
+
     if glob_pattern:
         cmd.extend(["--glob", glob_pattern])
-    
+
     if file_type:
         cmd.extend(["--type", file_type])
-    
-    # 添加搜索模式和目标路径
-    cmd.extend([pattern, search_path])
-    
+
+    cmd.extend([pattern, str(search_path)])
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
         )
-        
         stdout, stderr = await proc.communicate()
-        
-        # rg 返回码 1 表示未找到匹配，这不是错误
+
         if proc.returncode not in (0, 1):
-            error_msg = stderr.decode('utf-8', errors='replace').strip()
+            error_msg = stderr.decode("utf-8", errors="replace").strip()
             return f"Error executing grep: {error_msg}"
-        
-        result = stdout.decode('utf-8', errors='replace')
-        
-        # 处理 head_limit 截断（适用于所有输出模式）
+
+        result = stdout.decode("utf-8", errors="replace")
         if head_limit is not None and result:
             lines = result.splitlines()
             result = "\n".join(lines[:head_limit])
-        
+
         return result
-        
     except FileNotFoundError:
         return "Error: ripgrep (rg) not found. Please install ripgrep."
-    except Exception as e:
-        return f"Error executing grep: {str(e)}"
-    
+    except Exception as exc:
+        return f"Error executing grep: {str(exc)}"
+
+
 OUTPUT_TRUNCATE_LENGTH: Final[int] = 32000
+
+
 def formatted_tool_output(output: str) -> str:
-    # 1. 清理尾部空白（学习 TS 版本）
-    cleaned = output.rstrip('\n')
-    
+    cleaned = output.rstrip("\n")
     if len(cleaned) > OUTPUT_TRUNCATE_LENGTH:
         head_len = int(OUTPUT_TRUNCATE_LENGTH * 0.2)
         tail_len = int(OUTPUT_TRUNCATE_LENGTH * 0.2)
         head = cleaned[:head_len]
         tail = cleaned[-tail_len:]
-        skipped = len(output) - head_len - tail_len
-
+        skipped = len(cleaned) - head_len - tail_len
         return f"{head}\n...[{skipped} characters omitted]...\n{tail}"
-    
     return cleaned
-def parse_tool_arguments(toolcall: ToolCall):
+
+
+def parse_tool_arguments(toolcall: ToolCall) -> Dict[str, Any]:
     try:
         return json.loads(toolcall.function.arguments)
-    except json.JSONDecodeError as e:
-        console.print(f"[red]Error parsing tool arguments: {str(e)}[/red]")
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]Error parsing tool arguments: {str(exc)}[/red]")
         return {}
-
-
-def map_grep_params(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Map Grep tool JSON parameter names to run_grep function parameter names."""
-    param_mapping = {
-        "pattern": "pattern",
-        "path": "path",
-        "glob": "glob_pattern",
-        "type": "file_type",
-        "output_mode": "output_mode",
-        "-i": "case_insensitive",
-        "-n": "show_line_numbers",
-        "-B": "before_context",
-        "-A": "after_context",
-        "-C": "context",
-        "head_limit": "head_limit",
-        "multiline": "multiline",
-    }
-    
-    mapped = {}
-    for json_key, func_key in param_mapping.items():
-        if json_key in args:
-            mapped[func_key] = args[json_key]
-    
-    return mapped

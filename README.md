@@ -33,9 +33,11 @@ cp .env_example .env
 OPENAI_API_KEY=your-api-key
 OPENAI_BASE_URL=https://api.minimaxi.com/v1
 OPENAI_MODEL=MiniMax-M2.5
+OPENAI_API_MODE=auto
 WORKDIR=~/gem_code
-SKILLS_DIR=~/gem_code/.agent/skills  # 可选
+SKILLS_DIR=~/gem_code/.agents  # 可选，默认值为 WORKDIR/.agents
 MCP_CONFIG_PATH=~/gem_code/mcp_config.json  # 可选
+MEMORY_COMPACTION_PATH=~/.gem_code/projects
 ```
 
 ### 3. 运行
@@ -51,6 +53,7 @@ uv run python main.py
 ```bash
 uv run python main.py --cli
 uv run python main.py "你的问题"  # 一次性提问
+uv run python main.py --cli --once "你的问题"  # 发送一次后退出，适合自动化/评测
 ```
 
 ## 使用方法
@@ -294,9 +297,11 @@ message = accessor.get_line(index)
 | `OPENAI_API_KEY` | ✅ | - | API 密钥 |
 | `OPENAI_BASE_URL` | ✅ | - | API 基础 URL |
 | `OPENAI_MODEL` | ❌ | MiniMax-M2.5 | 模型名称 |
+| `OPENAI_API_MODE` | ❌ | auto | `auto` / `chat_completions` / `responses` |
 | `WORKDIR` | ❌ | 当前目录 | 工作目录 |
-| `SKILLS_DIR` | ❌ | - | 技能目录 |
+| `SKILLS_DIR` | ❌ | `WORKDIR/.agents` | 技能目录 |
 | `MCP_CONFIG_PATH` | ❌ | - | MCP 配置文件路径 |
+| `MEMORY_COMPACTION_PATH` | ❌ | `~/.gem_code/projects` | 会话压缩与持久化目录 |
 
 ## 技术栈
 
@@ -321,21 +326,29 @@ message = accessor.get_line(index)
 - [x] 按需加载 Skill
 - [x] 上下文管理
   - [x] Microcompaction（工具输出转移）
-  - [x] Autocompaction（自动摘要）
+  - [x] Autocompaction（自动摘要、自动读取最近的文件并重启TODO）
 - [x] 会话持久化（Session Memory）
 - [x] 使用 Pydantic 优化数据模型
 
 ### 开发中 🚧
 
-- [ ] OpenAI API Responses 适配
+- [x] OpenAI API Responses 适配（通过 `OPENAI_API_MODE=responses|auto` 启用）
   - 参考: <https://developers.openai.com/api/reference/resources/responses>
+- [x] MCP Streamable HTTP 传输支持（兼容 legacy SSE）
+  - 参考: <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports>
+- [x] 基础 Harbor Installed Agent 适配骨架
+  - 参考: <https://harborframework.com/docs/agents>
 - [ ] 多 API 支持（DeepSeek、Kimi、OpenAI 等）
 - [ ] Agent Teams（多 Agent 协作）
   - 领导 Agent 任务分配
   - 基于文件系统的 Agent 间通信
   - 参考文献: <https://decodeclaude.com/teams-and-swarms/>
-- [ ] 基于 Harbor 的 Coding Agent 测试
+- [ ] 基于 Harbor 的完整 Coding Agent 测试矩阵
+  - 当前已提供 Installed Agent 入口，后续需补充评测任务与轨迹解析，用于不同策略的消融实验，针对测试集:SWE-bench verified
   - 参考: <https://harborframework.com/docs/agents>
+- [ ] 增加用户交互（human in the loop）
+- [ ] Plan Mode
+- [ ] TODO List
 
 ## 安全提示
 
