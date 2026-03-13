@@ -12,3 +12,4 @@ huge_file*.json*
 .agents/
 .VSCodeCounter/
 .vscode/
+evaluation/jobs/
