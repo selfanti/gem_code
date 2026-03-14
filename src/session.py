@@ -230,7 +230,7 @@ class Session:
         return self.context_usage
 
     async def _initialize_system_prompt(self, skills_dir: Optional[str]) -> None:
-        system_prompt = get_system_prompt(self.workdir)
+        system_prompt = get_system_prompt(self.workdir, self.config.security)
         if skills_dir:
             self.skills = await load_skills(skills_dir)
             skill_tools = [
@@ -422,7 +422,8 @@ class Session:
                 stream=True,
                 tools=self._all_tools,  # type: ignore[arg-type]
                 tool_choice="auto",
-                max_tokens=1024 * 32,
+                max_tokens=1024 * 16,
+                temperature=0.5
             )
 
             has_tool_calls = False
@@ -694,7 +695,7 @@ class Session:
             self.history,
             self.memory_acess,
             user_prompt=user_prompt,
-            system_prompt=get_system_prompt(self.workdir),
+            system_prompt=get_system_prompt(self.workdir, self.config.security),
         )
         self._recalculate_context_usage()
 
@@ -806,6 +807,7 @@ class Session:
                     args.get("command", ""),
                     workdir,
                     timeout_ms=args.get("timeout_ms", 120000),
+                    security_settings=self.config.security,
                 )
                 return formatted_tool_output(output)
             if name == "read_file":
@@ -819,7 +821,12 @@ class Session:
                     await run_str_replace_file(args.get("path", ""), args.get("edits", []), workdir)
                 )
             if name == "fetch_url":
-                return formatted_tool_output(await run_fetch_url_to_markdown(args.get("url", "")))
+                return formatted_tool_output(
+                    await run_fetch_url_to_markdown(
+                        args.get("url", ""),
+                        security_settings=self.config.security,
+                    )
+                )
             if name == "Glob":
                 return formatted_tool_output(
                     await run_glob(args.get("pattern", ""), workdir, args.get("path"))
@@ -865,5 +872,7 @@ class Session:
         self._recalculate_context_usage()
 
     def clear_history(self) -> None:
-        self.history = [Message(role="system", content=get_system_prompt(self.workdir))]
+        self.history = [
+            Message(role="system", content=get_system_prompt(self.workdir, self.config.security))
+        ]
         self._recalculate_context_usage()

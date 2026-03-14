@@ -20,6 +20,10 @@ def test_load_config_uses_optional_defaults(monkeypatch, tmp_path) -> None:
     assert config.mcp_config_path is None
     assert config.memory_compaction_path == "~/.gem_code/projects"
     assert resolve_api_mode(config) == "chat_completions"
+    assert config.security.enabled is True
+    assert config.security.allow_network is False
+    assert config.security.connect_ports == ()
+    assert config.security.best_effort is True
 
 
 def test_resolve_api_mode_prefers_responses_for_openai(monkeypatch, tmp_path) -> None:
@@ -30,3 +34,20 @@ def test_resolve_api_mode_prefers_responses_for_openai(monkeypatch, tmp_path) ->
 
     config = load_config()
     assert resolve_api_mode(config) == "responses"
+
+
+def test_load_config_reads_security_env(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.minimaxi.com/v1")
+    monkeypatch.setenv("WORKDIR", str(tmp_path))
+    monkeypatch.setenv("GEM_CODE_SECURITY_ENABLED", "true")
+    monkeypatch.setenv("GEM_CODE_SECURITY_BEST_EFFORT", "false")
+    monkeypatch.setenv("GEM_CODE_SECURITY_ALLOW_NETWORK", "false")
+    monkeypatch.setenv("GEM_CODE_SECURITY_ALLOW_CONNECT", "443,8443")
+
+    config = load_config()
+
+    assert config.security.enabled is True
+    assert config.security.best_effort is False
+    assert config.security.allow_network is False
+    assert config.security.connect_ports == (443, 8443)

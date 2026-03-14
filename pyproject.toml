@@ -9,6 +9,7 @@ dependencies = [
     "harbor>=0.1.45",
     "mcp>=1.26.0",
     "openai>=2.21.0",
+    "py-landlock>=0.1.1",
     "pytest>=9.0.2",
     "python-ulid>=3.1.0",
     "rich>=14.3.3",

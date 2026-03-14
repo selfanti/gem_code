@@ -14,6 +14,11 @@ from trafilatura import extract, fetch_url
 
 from .mcp_client import MCPClient
 from .models import ToolCall
+from .security import (
+    SecuritySettings,
+    build_sandbox_runner_command,
+    ensure_url_permitted,
+)
 
 console = Console()
 
@@ -329,7 +334,12 @@ def _format_subprocess_result(
     return "\n".join(parts)
 
 
-async def run_bash(command: str, workdir: str, timeout_ms: int = 120000) -> str:
+async def run_bash(
+    command: str,
+    workdir: str,
+    timeout_ms: int = 120000,
+    security_settings: Optional[SecuritySettings] = None,
+) -> str:
     """Execute a single shell command with an enforced timeout.
 
     The previous implementation advertised timeouts and structured execution in
@@ -338,12 +348,22 @@ async def run_bash(command: str, workdir: str, timeout_ms: int = 120000) -> str:
     """
 
     timeout_ms = max(1, min(timeout_ms, 600000))
-    proc = await asyncio.create_subprocess_shell(
-        command,
-        cwd=str(_workdir_root(workdir)),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    if security_settings is not None and security_settings.enabled:
+        argv, env = build_sandbox_runner_command(command, workdir, security_settings)
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(_workdir_root(workdir)),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    else:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=str(_workdir_root(workdir)),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
 
     try:
         stdout, stderr = await asyncio.wait_for(
@@ -397,7 +417,12 @@ async def run_str_replace_file(path: str, edits: List[Dict[str, str]], workdir: 
     return f"Successfully applied {len(edits)} replacement(s) to {file_path}"
 
 
-async def run_fetch_url_to_markdown(url: str) -> str:
+async def run_fetch_url_to_markdown(
+    url: str,
+    security_settings: Optional[SecuritySettings] = None,
+) -> str:
+    if security_settings is not None:
+        ensure_url_permitted(url, security_settings)
     try:
         downloaded = await asyncio.to_thread(fetch_url, url)
         if not downloaded:

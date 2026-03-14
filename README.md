@@ -7,6 +7,7 @@
 - 🤖 **多模型支持**：OpenAI 兼容 API（默认 MiniMax-M2.5）
 - 🔌 **MCP 协议**：连接外部工具服务器（Playwright、Fetch、Filesystem 等）
 - 🛠️ **内置工具**：Bash、文件读写、字符串替换、URL 抓取、Glob、Grep
+- 🔒 **安全沙箱**：`bash` 工具默认在 Landlock 子进程沙箱中运行，遵循最小权限原则
 - 📁 **技能扩展**：通过 SKILL.md 扩展专业能力
 - 💬 **流式响应**：实时显示，支持思考内容分离
 - 🧠 **上下文管理**：智能压缩（microcompaction）和自动摘要（autocompaction）
@@ -38,6 +39,10 @@ WORKDIR=~/gem_code
 SKILLS_DIR=~/gem_code/.agents  # 可选，默认值为 WORKDIR/.agents
 MCP_CONFIG_PATH=~/gem_code/mcp_config.json  # 可选
 MEMORY_COMPACTION_PATH=~/.gem_code/projects
+GEM_CODE_SECURITY_ENABLED=true
+GEM_CODE_SECURITY_BEST_EFFORT=true
+GEM_CODE_SECURITY_ALLOW_NETWORK=false
+GEM_CODE_SECURITY_ALLOW_CONNECT=443
 ```
 
 ### 3. 运行
@@ -92,6 +97,26 @@ uv run python main.py --cli --once "你的问题"  # 发送一次后退出，适
 | `fetch_url` | 抓取 URL 内容 | `url`, `description` |
 | `Glob` | 文件搜索 | `pattern`, `path` |
 | `Grep` | 代码搜索 | `pattern`, `path`, `glob`, `output_mode`, `-i`, `-n`, `-B`, `-A`, `-C` |
+
+### 安全模型
+
+- `bash` 不再直接在主 Agent 进程里执行，而是通过独立的 Landlock runner 启动受限子进程
+- 默认只允许访问工作目录、工作目录下的私有临时目录 `.gem-code/tmp`，以及必要的系统运行时路径（如 `/usr`、`/bin`、`/lib`）
+- 出站网络默认关闭；只有显式配置 `GEM_CODE_SECURITY_ALLOW_NETWORK=true` 或在 `GEM_CODE_SECURITY_ALLOW_CONNECT` 中放行端口后，`bash` 和 `fetch_url` 才允许联网
+- 内核或环境不支持 Landlock 时，默认以 `best-effort` 模式继续执行并在工具输出中标注安全降级；如需 fail-closed，可设置 `GEM_CODE_SECURITY_BEST_EFFORT=false`
+
+可选环境变量：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `GEM_CODE_SECURITY_ENABLED` | `true` | 是否启用内置安全策略 |
+| `GEM_CODE_SECURITY_BEST_EFFORT` | `true` | Landlock 不可用时是否继续执行 |
+| `GEM_CODE_SECURITY_ALLOW_NETWORK` | `true` | 是否完全放开网络 |
+| `GEM_CODE_SECURITY_ALLOW_CONNECT` | 空 | 允许出站连接的 TCP 端口，逗号分隔 |
+| `GEM_CODE_SECURITY_ALLOW_BIND` | 空 | 允许监听的 TCP 端口，逗号分隔 |
+| `GEM_CODE_SECURITY_EXTRA_READ_PATHS` | 空 | 追加只读路径，逗号分隔 |
+| `GEM_CODE_SECURITY_EXTRA_WRITE_PATHS` | 空 | 追加可写路径，逗号分隔 |
+| `GEM_CODE_SECURITY_EXTRA_EXECUTE_PATHS` | 空 | 追加可执行路径，逗号分隔 |
 
 ### 上下文管理
 
@@ -339,7 +364,7 @@ message = accessor.get_line(index)
 - [x] 基础 Harbor Installed Agent 适配骨架
   - 参考: <https://harborframework.com/docs/agents>
 - [ ] 多 API 支持（DeepSeek、Kimi、OpenAI 等）
-- [ ] Agent Teams（多 Agent 协作）
+- [ ] Agent Teams（多 Agent 协作）（多agent的有效性有待商榷，暂时不进行开发）
   - 领导 Agent 任务分配
   - 基于文件系统的 Agent 间通信
   - 参考文献: <https://decodeclaude.com/teams-and-swarms/>

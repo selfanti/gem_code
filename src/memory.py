@@ -199,3 +199,5 @@ class JsonlRandomAccess:
     def load_memory_index(self) -> None:
         with open(self.memory_index_path, "r", encoding="utf-8") as handle:
             self.offsets = json.load(handle)
+    def get_offsets(self):
+        return self.offsets

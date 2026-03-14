@@ -132,21 +132,27 @@ class Context_Manager:
         memory_acess: JsonlRandomAccess,
         *,
         system_prompt: Optional[str] = None,
-        recent_messages_before_boundary: int = 6,
-        recent_messages_after_boundary: int = 12,
+        recent_tool_messages_before_boundary: int = 3,
+        recent_normal_messages_before_boundary: int = 3
     ) -> list[Message]:
         """Reconstruct a compact but operational history from the transcript.
 
         After compaction or resume, the model should see:
         1. the system prompt,
         2. the latest summary produced at the compaction boundary,
-        3. a short tail of raw messages immediately before the boundary,
-        4. the messages that happened after the boundary.
+        3. a short tail of raw messages immediately before the boundary, alway guarantee that 
+        there are at least 3 results of tool and at least 3 normal messages without tool use.
 
         This pattern restores actionable local detail such as recent tool calls
         and file reads without replaying the entire conversation.
         """
 
+        offsets=memory_acess.get_offsets()
+        lines=len(offsets)
+        # for i in reversed(range(lines)):
+        #     data=memory_acess.get_line(i)
+        #     memory_message = Memory_Unit.model_validate(data)
+        #     if memory_message.type=""
         units = memory_acess.load_memory_units()
         if not units:
             return [Message(role="system", content=system_prompt)] if system_prompt else []

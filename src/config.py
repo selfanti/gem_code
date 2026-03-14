@@ -1,10 +1,11 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
-import os
-
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+
+from .security import SecuritySettings, load_security_settings
 
 
 ApiMode = Literal["auto", "chat_completions", "responses"]
@@ -20,6 +21,7 @@ class Config:
     mcp_config_path: Optional[str]
     memory_compaction_path: str
     api_mode: ApiMode
+    security: SecuritySettings
 
 
 def _expand_path(path: Optional[str]) -> Optional[str]:
@@ -38,7 +40,7 @@ def load_config() -> Config:
     mandatory.
     """
 
-    load_dotenv()
+    load_dotenv(override=True)
 
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL")
@@ -74,6 +76,8 @@ def load_config() -> Config:
     if not base_url:
         raise ValueError("OPENAI_BASE_URL environment variable is not set")
 
+    security = load_security_settings(workdir)
+
     return Config(
         api_key=api_key,
         base_url=base_url,
@@ -83,6 +87,7 @@ def load_config() -> Config:
         mcp_config_path=mcp_config_path,
         memory_compaction_path=memory_compaction_path,
         api_mode=api_mode,
+        security=security,
     )
 
 
@@ -90,10 +95,11 @@ SYSTEM_PROMPT = """
 你是 Gem Code，一个轻量级的 CLI Agent。
 
 当前工作目录：{workdir}
+当前安全策略：{security_summary}
 
 ## 工具使用规则
 
-当你需要执行命令或读取文件时，必须使用 tool_calls 格式调用工具，而不是在文本中描述。
+当你需要执行命令或读取文件时，必须使用 tool_calls 格式调用工具。
 
 ### bash 工具
 用于执行 Shell 命令。调用时必须提供：
@@ -117,19 +123,27 @@ SYSTEM_PROMPT = """
 3. 保持回答简洁、直接
 
 ## Skills
-如果用户询问的内容与某个 Skill 的描述相关，自动触发调用以 "skill__" 开头的 tool 来加载 SKILL.md 文档中的最佳实践到上下文。
+如果用户询问的内容与某个 Skill 的描述相关，自动触发调用以 "skill__" 开头的 tool 来加载 SKILL.md 文档中的最佳实践到上下文，接着遵循最佳实践中的指示行动。
 
 ## 重要
 - 所有命令都必须在工作目录下执行，不允许在没有用户同意的情况下执行危险的代码
+- `bash` 在安全沙箱中执行；默认只允许工作目录、私有临时目录和必要的系统运行时路径
 - 使用完整路径避免混淆
 - 遇到错误时，修复后重试
 """
 
 
-def get_system_prompt(workdir: str) -> str:
+def get_system_prompt(
+    workdir: str,
+    security: Optional[SecuritySettings] = None,
+) -> str:
     """Render the system prompt against the configured work directory."""
 
-    return SYSTEM_PROMPT.replace("{workdir}", str(Path(workdir).expanduser()))
+    rendered = SYSTEM_PROMPT.replace("{workdir}", str(Path(workdir).expanduser()))
+    return rendered.replace(
+        "{security_summary}",
+        security.summary() if security is not None else "sandbox on; policy hidden",
+    )
 
 
 def resolve_api_mode(config: Config) -> Literal["chat_completions", "responses"]:

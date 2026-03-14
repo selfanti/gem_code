@@ -44,7 +44,7 @@ class SessionManager:
         self.session.set_history(
             self.session.context_manager.rehydration(
                 self.memory_access,
-                system_prompt=get_system_prompt(self.config.workdir),
+                system_prompt=get_system_prompt(self.config.workdir, self.config.security),
             )
         )
 

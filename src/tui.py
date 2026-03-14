@@ -811,10 +811,7 @@ class Sidebar(Container):
         # Model info
         with Vertical(classes="section"):
             yield Label("MODEL", classes="section-title")
-            
-            with Vertical(classes="info-row"):
-                yield Label("Name:", classes="info-label")
-                yield Label(Text(self.config.model), classes="info-value")
+            yield Label(Text(self.config.model), classes="info-value")
             
             with Vertical(classes="info-row"):
                 yield Label("API:", classes="info-label")
@@ -829,23 +826,15 @@ class Sidebar(Container):
             if len(workdir) > 28:
                 workdir = "..." + workdir[-25:]
             yield Label(Text(workdir), classes="info-value")
-        
-        # Tools info
+
         with Vertical(classes="section"):
-            yield Label("TOOLS", classes="section-title")
-            tools = [
-                ("🔧", "bash"),
-                ("📖", "read_file"),
-                ("✏️", "write_file"),
-                ("🔄", "StrReplaceFile"),
-                ("🌐", "fetch_url"),
-                ("🔍", "Glob"),
-                ("🔎", "Grep"),
-            ]
-            tool_text = " ".join([f"{icon} {name}" for icon, name in tools[:4]])
-            yield Label(Text(tool_text), classes="info-value")
-            tool_text2 = " ".join([f"{icon} {name}" for icon, name in tools[4:]])
-            yield Label(Text(tool_text2), classes="info-value")
+            yield Label("SECURITY", classes="section-title")
+            sandbox_state = "on" if self.config.security.enabled else "off"
+            yield Label(Text(f"sandbox: {sandbox_state}"), classes="info-value")
+            yield Label(
+                Text(f"network: {self.config.security.network_summary()}"),
+                classes="info-value",
+            )
         
         # Context usage info
         with Vertical(classes="section"):
