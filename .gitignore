@@ -11,3 +11,4 @@ node_modules/
 .VSCodeCounter/
 .vscode/
 evaluation/jobs/
+__pycache__/
