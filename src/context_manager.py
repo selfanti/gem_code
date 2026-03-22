@@ -83,15 +83,16 @@ class Context_Manager:
         compaction_result = await chat_one_step(user_input=prompt)
         summary = Memory_Unit(type="summary", content=compaction_result)
         memory_acess.add_line(summary.model_dump_json())
-
+        history.clear()
+        history.append(Message(role="system", timestamp=summary.timestamp, id=summary.id, content=system_prompt+summary.content if system_prompt and summary.content else system_prompt))
         # Rebuild the in-memory history from the transcript instead of keeping
         # only the raw summary. This makes compaction immediately usable because
         # the model regains a compact summary plus a small slice of recent raw
         # context around the compression boundary.
-        history[:] = self.rehydration(
+        history.extend(self.rehydration(
             memory_acess,
             system_prompt=system_prompt,
-        )
+        ))
 
     def _trim_message_for_rehydration(
         self,
@@ -149,93 +150,111 @@ class Context_Manager:
 
         offsets=memory_acess.get_offsets()
         lines=len(offsets)
-        # for i in reversed(range(lines)):
-        #     data=memory_acess.get_line(i)
-        #     memory_message = Memory_Unit.model_validate(data)
-        #     if memory_message.type=""
-        units = memory_acess.load_memory_units()
-        if not units:
-            return [Message(role="system", content=system_prompt)] if system_prompt else []
+        count_norm=0
+        count_tool=0
+        message_recent=[]
 
-        boundary_indexes = [
-            index
-            for index, unit in enumerate(units)
-            if unit.type == "compact_boundary"
-        ]
+        for i in reversed(range(lines)):
+            data=memory_acess.get_line(i)
+            memory_message = Memory_Unit.model_validate(data)
+            history_message=memory_message.to_message()
+            if history_message is not None:
+                message_recent.append(self._trim_message_for_rehydration(history_message))
+                if history_message.role=="tool":
+                    count_tool+=1
+                if history_message.role=="user" or "assistant":
+                    count_norm+=1
+                if i<lines-10 or (count_tool>=recent_tool_messages_before_boundary
+                                  and count_norm>=recent_normal_messages_before_boundary):
+                    break
+        return message_recent
 
-        if not boundary_indexes:
-            messages = [
-                unit.to_message()
-                for unit in units
-                if unit.type == "message" and unit.to_message() is not None
-            ]
-            restored = [message for message in messages if message is not None]
-            if system_prompt:
-                if restored and restored[0].role == "system":
-                    return restored
-                return [Message(role="system", content=system_prompt), *restored]
-            return restored
 
-        last_boundary_index = boundary_indexes[-1]
-        units_before_boundary = units[:last_boundary_index]
-        units_after_boundary = units[last_boundary_index + 1 :]
 
-        summary_unit = next(
-            (
-                unit
-                for unit in units_after_boundary
-                if unit.type == "summary" and unit.content
-            ),
-            None,
-        )
 
-        before_messages = [
-            unit.to_message()
-            for unit in units_before_boundary
-            if unit.type == "message"
-            and unit.role != "system"
-            and unit.to_message() is not None
-        ]
-        after_messages = [
-            unit.to_message()
-            for unit in units_after_boundary
-            if unit.type == "message" and unit.to_message() is not None
-        ]
+        # units = memory_acess.load_memory_units()
+        # if not units:
+        #     return [Message(role="system", content=system_prompt)] if system_prompt else []
 
-        restored_history: list[Message] = []
-        if system_prompt:
-            restored_history.append(Message(role="system", content=system_prompt))
+        # boundary_indexes = [
+        #     index
+        #     for index, unit in enumerate(units)
+        #     if unit.type == "compact_boundary"
+        # ]
 
-        if summary_unit and summary_unit.content:
-            restored_history.append(
-                Message(
-                    role="assistant",
-                    content=(
-                        "以下是自动压缩后的会话摘要，请基于它继续工作：\n"
-                        f"{summary_unit.content}"
-                    ),
-                )
-            )
+        # if not boundary_indexes:
+        #     messages = [
+        #         unit.to_message()
+        #         for unit in units
+        #         if unit.type == "message" and unit.to_message() is not None
+        #     ]
+        #     restored = [message for message in messages if message is not None]
+        #     if system_prompt:
+        #         if restored and restored[0].role == "system":
+        #             return restored
+        #         return [Message(role="system", content=system_prompt), *restored]
+        #     return restored
 
-        if before_messages:
-            restored_history.append(
-                Message(
-                    role="assistant",
-                    content=(
-                        "以下为压缩边界之前保留的最近原始上下文，"
-                        "用于恢复工具调用、文件读取和待办状态："
-                    ),
-                )
-            )
-            restored_history.extend(
-                self._trim_message_for_rehydration(message)
-                for message in before_messages[-recent_messages_before_boundary:]
-            )
+        # last_boundary_index = boundary_indexes[-1]
+        # units_before_boundary = units[:last_boundary_index]
+        # units_after_boundary = units[last_boundary_index + 1 :]
 
-        if after_messages:
-            restored_history.extend(
-                self._trim_message_for_rehydration(message)
-                for message in after_messages[-recent_messages_after_boundary:]
-            )
+        # summary_unit = next(
+        #     (
+        #         unit
+        #         for unit in units_after_boundary
+        #         if unit.type == "summary" and unit.content
+        #     ),
+        #     None,
+        # )
 
-        return restored_history
+        # before_messages = [
+        #     unit.to_message()
+        #     for unit in units_before_boundary
+        #     if unit.type == "message"
+        #     and unit.role != "system"
+        #     and unit.to_message() is not None
+        # ]
+        # after_messages = [
+        #     unit.to_message()
+        #     for unit in units_after_boundary
+        #     if unit.type == "message" and unit.to_message() is not None
+        # ]
+
+        # restored_history: list[Message] = []
+        # if system_prompt:
+        #     restored_history.append(Message(role="system", content=system_prompt))
+
+        # if summary_unit and summary_unit.content:
+        #     restored_history.append(
+        #         Message(
+        #             role="assistant",
+        #             content=(
+        #                 "以下是自动压缩后的会话摘要，请基于它继续工作：\n"
+        #                 f"{summary_unit.content}"
+        #             ),
+        #         )
+        #     )
+
+        # if before_messages:
+        #     restored_history.append(
+        #         Message(
+        #             role="assistant",
+        #             content=(
+        #                 "以下为压缩边界之前保留的最近原始上下文，"
+        #                 "用于恢复工具调用、文件读取和待办状态："
+        #             ),
+        #         )
+        #     )
+        #     restored_history.extend(
+        #         self._trim_message_for_rehydration(message)
+        #         for message in before_messages[-recent_messages_before_boundary:]
+        #     )
+
+        # if after_messages:
+        #     restored_history.extend(
+        #         self._trim_message_for_rehydration(message)
+        #         for message in after_messages[-recent_messages_after_boundary:]
+        #     )
+
+        # return restored_history

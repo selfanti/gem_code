@@ -102,7 +102,7 @@ uv run python main.py --cli --once "你的问题"  # 发送一次后退出，适
 
 - `bash` 不再直接在主 Agent 进程里执行，而是通过独立的 Landlock runner 启动受限子进程
 - 默认只允许访问工作目录、工作目录下的私有临时目录 `.gem-code/tmp`，以及必要的系统运行时路径（如 `/usr`、`/bin`、`/lib`）
-- 出站网络默认关闭；只有显式配置 `GEM_CODE_SECURITY_ALLOW_NETWORK=true` 或在 `GEM_CODE_SECURITY_ALLOW_CONNECT` 中放行端口后，`bash` 和 `fetch_url` 才允许联网
+- 出站网络默认开启；显式配置 `GEM_CODE_SECURITY_ALLOW_NETWORK=true` 或在 `GEM_CODE_SECURITY_ALLOW_CONNECT` 中放行端口后，`bash` 和 `fetch_url` 才允许联网
 - 内核或环境不支持 Landlock 时，默认以 `best-effort` 模式继续执行并在工具输出中标注安全降级；如需 fail-closed，可设置 `GEM_CODE_SECURITY_BEST_EFFORT=false`
 
 可选环境变量：
@@ -117,7 +117,7 @@ uv run python main.py --cli --once "你的问题"  # 发送一次后退出，适
 | `GEM_CODE_SECURITY_EXTRA_READ_PATHS` | 空 | 追加只读路径，逗号分隔 |
 | `GEM_CODE_SECURITY_EXTRA_WRITE_PATHS` | 空 | 追加可写路径，逗号分隔 |
 | `GEM_CODE_SECURITY_EXTRA_EXECUTE_PATHS` | 空 | 追加可执行路径，逗号分隔 |
-
+注意部分限制特性依赖Linux内核版本
 ### 上下文管理
 
 Gem Code 实现了智能上下文管理系统，有效处理长对话：
@@ -364,7 +364,7 @@ message = accessor.get_line(index)
 - [x] 基础 Harbor Installed Agent 适配骨架
   - 参考: <https://harborframework.com/docs/agents>
 - [ ] 多 API 支持（DeepSeek、Kimi、OpenAI 等）
-- [ ] Agent Teams（多 Agent 协作）（多agent的有效性有待商榷，暂时不进行开发）
+- [ ] Agent Teams（多 Agent 协作）（多agent的有效性有待商榷，暂时搁置）
   - 领导 Agent 任务分配
   - 基于文件系统的 Agent 间通信
   - 参考文献: <https://decodeclaude.com/teams-and-swarms/>
@@ -374,7 +374,7 @@ message = accessor.get_line(index)
   - 初始 SWE-bench Verified 采样运行示例：
     - `uv run python evaluation/run_swebench_verified.py --n-tasks 10`
   - 参考: <https://harborframework.com/docs/agents>
-- [ ] 增加用户交互（human in the loop）
+- [ ] 增加用户交互（human in the loop），针对开发者，主动披露下一步行动的目的和具体操作。支持agent运行时的interupt。便于开发者及时阻止错误方向
 - [ ] Plan Mode
 - [ ] TODO List
 
@@ -392,7 +392,17 @@ message = accessor.get_line(index)
 - Claude Code 博客: <https://claude.com/blog>
 - Claude Code 上下文压缩: <https://decodeclaude.com/compaction-deep-dive/>
 - Claude Code 会话记忆: <https://decodeclaude.com/session-memory/>
+- Kimi API参考<https://platform.moonshot.cn/docs/guide/kimi-k2-5-quickstart#%E5%8F%82%E6%95%B0%E5%8F%98%E5%8A%A8%E8%AF%B4%E6%98%8E>
+- Minimax API参考<https://platform.minimaxi.com/docs/api-reference/text-openai-api>
+- Deepseek API参考<https://api-docs.deepseek.com/zh-cn/>
 
+## 一点想法
+对于coding agent甚至大部分agent来说，我认为应该具有以下几点功能：
+- **可观测性/便于观测性**：大模型的执行过程可能需要人的介入，为了方便人类使用者，agent重点输出的应该是方便供使用者检查的
+内容以及对应格式。
+- **分层文件系统**：对于LLM需要的任何较大的信息源，都应该进行知识的分层，顶层到底层由概括到细致。这将大大有利于AI的信息提取。目前的agent方案要么使用不包含结构信息的RAG，要么使用Glob和Grep工具针对关键词进行查找。这两种方案效率都是较低的。
+- **面向Agent的工作环境**：LLM的参数越来越多，能力越来越强，但是想要更好的发挥出它的潜力，一个精心设计的、面向LLM而不是面向人的的工作环境至关重要。其中工具设计、上下文工程和针对agent设计的记忆功能都是重点.
+- **Agent对人类的安全性**：AI技术的一切发展都以人类为中心，为了防止Agent的能力范围超出人类掌握，需要有严格的安全措施，这在目前是较少谈论的。
 ## 许可证
 
 MIT License

@@ -9,7 +9,7 @@ from rich.text import Text
 from .config import load_config
 from .decorate import pc_blue, pc_cyan, pc_gray
 from .session_manager import SessionManager
-
+import readline
 console = Console()
 
 
