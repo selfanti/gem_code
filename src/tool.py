@@ -78,12 +78,29 @@ TOOLS: Final[List[Dict[str, Any]]] = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a text file from inside the working directory.",
+            "description": (
+                "Read a text file from inside the working directory. Prefer "
+                "using start_line/end_line for progressive disclosure on large files."
+            ),
             "parameters": _object_schema(
                 {
                     "path": {
                         "type": "string",
                         "description": "Path relative to the working directory.",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": (
+                            "Optional 1-based inclusive start line. Use with "
+                            "end_line to read only part of a file."
+                        ),
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": (
+                            "Optional 1-based inclusive end line. Omit to read "
+                            "from start_line to the end of the file."
+                        ),
                     },
                     "description": {
                         "type": "string",
@@ -379,10 +396,45 @@ async def run_bash(
     return _format_subprocess_result(command, proc.returncode or 0, stdout, stderr)
 
 
-async def run_read_file(path: str, workdir: str) -> str:
+async def run_read_file(
+    path: str,
+    workdir: str,
+    start_line: Optional[int] = None,
+    end_line: Optional[int] = None,
+) -> str:
+    if start_line is not None and start_line < 1:
+        raise ValueError("start_line must be greater than or equal to 1")
+    if end_line is not None and end_line < 1:
+        raise ValueError("end_line must be greater than or equal to 1")
+
+    effective_start_line = start_line or 1
+    if end_line is not None and effective_start_line > end_line:
+        raise ValueError("start_line must be less than or equal to end_line")
+
     file_path = _resolve_path_in_workdir(workdir, path)
     async with aiofiles.open(file_path, "r", encoding="utf-8") as handle:
-        return await handle.read()
+        if start_line is None and end_line is None:
+            content=await handle.read()
+            return content
+
+        selected_lines: List[str] = []
+        total_lines = 0
+        async for line in handle:
+            total_lines += 1
+            if total_lines < effective_start_line:
+                continue
+            if end_line is not None and total_lines > end_line:
+                break
+            selected_lines.append(f"{total_lines}: {line.rstrip(chr(10))}")
+
+    if selected_lines:
+        return "\n".join(selected_lines)
+
+    requested_end = end_line if end_line is not None else "EOF"
+    return (
+        f"No content found in {file_path} for line range "
+        f"{effective_start_line}-{requested_end}. File has {total_lines} line(s)."
+    )
 
 
 async def run_write_file(path: str, content: str, workdir: str) -> str:

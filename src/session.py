@@ -811,7 +811,14 @@ class Session:
                 )
                 return formatted_tool_output(output)
             if name == "read_file":
-                return formatted_tool_output(await run_read_file(args.get("path", ""), workdir))
+                return formatted_tool_output(
+                    await run_read_file(
+                        args.get("path", ""),
+                        workdir,
+                        start_line=args.get("start_line"),
+                        end_line=args.get("end_line"),
+                    )
+                )
             if name == "write_file":
                 return formatted_tool_output(
                     await run_write_file(args.get("path", ""), args.get("content", ""), workdir)

@@ -91,7 +91,7 @@ uv run python main.py --cli --once "你的问题"  # 发送一次后退出，适
 | 工具 | 描述 | 参数 |
 |------|------|------|
 | `bash` | 执行 Shell 命令 | `command`, `description` |
-| `read_file` | 读取文件 | `path`, `description` |
+| `read_file` | 读取文件，支持渐进式披露 | `path`, `start_line`, `end_line`, `description` |
 | `write_file` | 写入文件 | `path`, `content`, `description` |
 | `StrReplaceFile` | 字符串替换 | `path`, `edits` |
 | `fetch_url` | 抓取 URL 内容 | `url`, `description` |

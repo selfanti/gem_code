@@ -114,8 +114,15 @@ SYSTEM_PROMPT = """
 - path: 文件路径（必填）
 - description: 简洁说明（必填）
 
+可选参数：
+- start_line: 起始行号，1-based 且包含该行
+- end_line: 结束行号，1-based 且包含该行
+
+优先使用 `start_line` / `end_line` 做渐进式披露，只读取当前需要的片段，避免一次读取超大文件。
+
 示例：
 {"path": "package.json", "description": "查看项目配置"}
+{"path": "src/session.py", "start_line": 120, "end_line": 180, "description": "查看工具分发逻辑"}
 
 ## 工作流程
 1. 直接调用工具获取信息，不要在回复中描述你要做什么
