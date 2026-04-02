@@ -7,11 +7,11 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict, Final, List, Optional
-
+from sentence_transformers import SentenceTransformer
 import aiofiles
 from rich.console import Console
 from trafilatura import extract, fetch_url
-
+import numpy as np
 from .mcp_client import MCPClient
 from .models import ToolCall
 from .security import (
@@ -620,3 +620,37 @@ def parse_tool_arguments(toolcall: ToolCall) -> Dict[str, Any]:
     except json.JSONDecodeError as exc:
         console.print(f"[red]Error parsing tool arguments: {str(exc)}[/red]")
         return {}
+
+def build_tool_embedding(embedding_model:SentenceTransformer,tools:List[Dict[str, Any]]):
+    tools_embedding={}
+    tools_descriptions=[]
+    for tool in tools:
+        if tool["type"] == "function":
+            func = tool["function"]
+            name = func["name"]
+            description = func.get("description", "")
+            tools_descriptions.append(f"{name}: {description}")
+
+
+    if tools_descriptions:
+        embeddings = embedding_model.encode(tools_descriptions)
+        for i, tool in enumerate(tools):
+            if tool["type"] == "function":
+                tools_embedding[tool["function"]["name"]] = embeddings[i]
+    return tools_embedding
+
+def search_tool(tools:List[Dict[str, Any]],embedding_model:SentenceTransformer,prompt:str,tools_embedding:dict)->List[Dict[str, Any]]:
+    embeddings=[]
+    for embedding in tools_embedding.values():
+        embeddings.append(embedding)
+    embeddings=np.array(embeddings)
+    input_embedding = embedding_model.encode([prompt])
+    similarity = embedding_model.similarity(input_embedding, embeddings)
+    tool_similarity = list(zip(tools, similarity[0]))
+    tool_similarity.sort(key=lambda x: x[1], reverse=True)
+    sorted_tools = [tool for tool, similarity in tool_similarity if similarity >= 0.4]
+    return sorted_tools
+
+
+
+    

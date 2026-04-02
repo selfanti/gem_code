@@ -7,7 +7,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-
+from sentence_transformers import SentenceTransformer
 from rich.console import Console
 from ulid import ULID
 from uuid import UUID
@@ -36,6 +36,8 @@ from .tool import (
     run_str_replace_file,
     run_write_file,
     set_mcp_client,
+    build_tool_embedding,
+    search_tool,
 )
 
 console = Console()
@@ -98,6 +100,7 @@ class Session:
         self.context_manager = Context_Manager()
         self._token_encoder = self._build_token_encoder()
         self._tool_schema_token_estimate = 0
+        self.embedding_model = SentenceTransformer("embedding_model")
         self.context_usage = ContextUsageSnapshot(
             used_tokens=0,
             max_tokens=self.max_context_tokens,
@@ -110,6 +113,7 @@ class Session:
         self._init_task = asyncio.create_task(
             self._initialize_system_prompt(config.skills_dir)
         )
+        self.tools_embeddings=build_tool_embedding(self.embedding_model,self._all_tools)
 
     def _build_token_encoder(self):
         """Best-effort token encoder for live context estimation.
@@ -420,7 +424,7 @@ class Session:
                 messages=[_message_to_chat_dict(m) for m in self.history],  # type: ignore[arg-type]
                 extra_body={"reasoning_split": True},
                 stream=True,
-                tools=self._all_tools,  # type: ignore[arg-type]
+                tools=search_tool(self._all_tools,self.embedding_model,user_input,self.tools_embeddings),  # type: ignore[arg-type]
                 tool_choice="auto",
                 max_tokens=1024 * 16,
                 temperature=0.5

@@ -12,3 +12,5 @@ node_modules/
 .vscode/
 evaluation/jobs/
 __pycache__/
+embedding_model/*
+test.py

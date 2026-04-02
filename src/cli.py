@@ -10,7 +10,23 @@ from .config import load_config
 from .decorate import pc_blue, pc_cyan, pc_gray
 from .session_manager import SessionManager
 import readline
+
 console = Console()
+_stream_phase: str | None = None
+
+
+def _switch_stream_phase(next_phase: str) -> None:
+    global _stream_phase
+    if _stream_phase and _stream_phase != next_phase:
+        console.print()
+    _stream_phase = next_phase
+
+
+def _end_stream_line() -> None:
+    global _stream_phase
+    if _stream_phase is not None:
+        console.print()
+        _stream_phase = None
 
 
 async def async_input(prompt: str = "") -> str:
@@ -20,18 +36,22 @@ async def async_input(prompt: str = "") -> str:
 
 
 def on_reasoning(chunk: str) -> None:
+    _switch_stream_phase("reasoning")
     console.print(Text(chunk, style="dim"), end="")
 
 
 def on_content(chunk: str) -> None:
+    _switch_stream_phase("content")
     console.print(Text(chunk, style="blue"), end="")
 
 
 def on_tool_start(tool_name: str, args: dict) -> None:
-    console.print(pc_blue(f"\n🛠️  Executing tool: {tool_name}"))
+    _end_stream_line()
+    console.print(pc_blue(f"🛠️  Executing tool: {tool_name}"))
 
 
 def on_tool_result(tool_name: str, result: str) -> None:
+    _end_stream_line()
     console.print(pc_blue(f"👁 OBSERVE\n{result}\n"))
 
 
@@ -67,7 +87,7 @@ async def main(initial_prompt: str | None = None, once: bool = False) -> None:
                 on_tool_start=on_tool_start,
                 on_tool_result=on_tool_result,
             )
-            console.print()
+            _end_stream_line()
             if once:
                 return
 
@@ -88,7 +108,7 @@ async def main(initial_prompt: str | None = None, once: bool = False) -> None:
                     on_tool_start=on_tool_start,
                     on_tool_result=on_tool_result,
                 )
-                console.print()
+                _end_stream_line()
             except EOFError:
                 console.print(pc_gray("\nExiting..."))
                 break

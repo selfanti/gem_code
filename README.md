@@ -354,6 +354,7 @@ message = accessor.get_line(index)
   - [x] Autocompaction（自动摘要、自动读取最近的文件并重启TODO）
 - [x] 会话持久化（Session Memory）
 - [x] 使用 Pydantic 优化数据模型
+- [x] tool search支持
 
 ### 开发中 🚧
 
@@ -377,6 +378,8 @@ message = accessor.get_line(index)
 - [ ] 增加用户交互（human in the loop），针对开发者，主动披露下一步行动的目的和具体操作。支持agent运行时的interupt。便于开发者及时阻止错误方向
 - [ ] Plan Mode
 - [ ] TODO List
+- [ ] 增加审查者角色的LLM
+- [ ] subagent
 
 ## 安全提示
 
