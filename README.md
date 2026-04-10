@@ -21,6 +21,7 @@
 ```bash
 uv sync
 ```
+另外需要在embedding_model文件夹下下载一个嵌入模型，推荐使用Qwen3-Embedding-0.6B
 
 ### 2. 配置
 
