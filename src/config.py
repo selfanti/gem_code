@@ -22,6 +22,7 @@ class Config:
     memory_compaction_path: str
     api_mode: ApiMode
     security: SecuritySettings
+    use_tool_search: bool = True
 
 
 def _expand_path(path: Optional[str]) -> Optional[str]:
@@ -88,6 +89,7 @@ def load_config() -> Config:
         memory_compaction_path=memory_compaction_path,
         api_mode=api_mode,
         security=security,
+        use_tool_search=os.getenv("USE_TOOL_SEARCH", "false").lower() == "true",
     )
 
 

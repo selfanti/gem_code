@@ -381,6 +381,7 @@ message = accessor.get_line(index)
 - [ ] TODO List
 - [ ] 增加审查者角色的LLM
 - [ ] subagent
+- [ ] 基于slime框架实现Agentic RL
 
 ## 安全提示
 

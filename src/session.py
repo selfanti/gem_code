@@ -100,7 +100,7 @@ class Session:
         self.context_manager = Context_Manager()
         self._token_encoder = self._build_token_encoder()
         self._tool_schema_token_estimate = 0
-        self.embedding_model = SentenceTransformer("embedding_model")
+        
         self.context_usage = ContextUsageSnapshot(
             used_tokens=0,
             max_tokens=self.max_context_tokens,
@@ -113,7 +113,12 @@ class Session:
         self._init_task = asyncio.create_task(
             self._initialize_system_prompt(config.skills_dir)
         )
-        self.tools_embeddings=build_tool_embedding(self.embedding_model,self._all_tools)
+        if self.config.use_tool_search:
+            self.embedding_model = SentenceTransformer("embedding_model")
+            self.tools_embeddings=build_tool_embedding(self.embedding_model,self._all_tools)
+        else:
+            self.embedding_model=None
+            self.tools_embeddings=None
 
     def _build_token_encoder(self):
         """Best-effort token encoder for live context estimation.
@@ -424,7 +429,7 @@ class Session:
                 messages=[_message_to_chat_dict(m) for m in self.history],  # type: ignore[arg-type]
                 extra_body={"reasoning_split": True},
                 stream=True,
-                tools=search_tool(self._all_tools,self.embedding_model,user_input,self.tools_embeddings),  # type: ignore[arg-type]
+                tools=search_tool(self._all_tools,self.embedding_model,user_input,self.tools_embeddings) if self.config.use_tool_search else self._all_tools,  # type: ignore[arg-type]
                 tool_choice="auto",
                 max_tokens=1024 * 16,
                 temperature=0.5
