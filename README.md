@@ -21,7 +21,7 @@
 ```bash
 uv sync
 ```
-另外需要在embedding_model文件夹下下载一个嵌入模型，推荐使用Qwen3-Embedding-0.6B
+另外需要在embedding_model文件夹下下载一个嵌入模型，推荐使用Qwen3-Embedding-0.6B，USE_TOOL_SEARCH设置为false则不需要
 
 ### 2. 配置
 
@@ -44,6 +44,7 @@ GEM_CODE_SECURITY_ENABLED=true
 GEM_CODE_SECURITY_BEST_EFFORT=true
 GEM_CODE_SECURITY_ALLOW_NETWORK=false
 GEM_CODE_SECURITY_ALLOW_CONNECT=443
+USE_TOOL_SEARCH=false
 ```
 
 ### 3. 运行
