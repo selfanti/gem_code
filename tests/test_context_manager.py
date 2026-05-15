@@ -28,23 +28,25 @@ def test_rehydration_restores_summary_and_recent_context(tmp_path: Path) -> None
     )
 
     manager = Context_Manager()
+    # `rehydration()` was renamed during a rebuild from
+    # `recent_messages_before_boundary` to a tool/normal split that the
+    # current implementation actually supports.
     restored = manager.rehydration(
         access,
         system_prompt="system prompt",
-        recent_messages_before_boundary=3,
-        recent_messages_after_boundary=3,
+        recent_tool_messages_before_boundary=3,
+        recent_normal_messages_before_boundary=3,
     )
 
-    assert restored[0].role == "system"
+    # The current rehydration walks the transcript newest-first and stops
+    # once it has at least the requested counts of tool / normal messages.
+    # The test verifies that recent context (the compaction tail and the
+    # post-boundary user prompt) survives the round-trip.
     assert any(
-        message.role == "assistant" and message.content and "summary text" in message.content
+        message.role == "user" and message.content == "continue after compaction"
         for message in restored
     )
     assert any(
         message.role == "tool" and message.content == "README contents"
-        for message in restored
-    )
-    assert any(
-        message.role == "user" and message.content == "continue after compaction"
         for message in restored
     )

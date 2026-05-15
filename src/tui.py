@@ -40,6 +40,7 @@ from rich.text import Text
 
 from .config import Config, load_config
 from .models import ContextUsageSnapshot
+from .permissions import PermissionDecision
 from .session_manager import SessionManager
 from .tool import formatted_tool_output
 
@@ -1002,6 +1003,139 @@ class HelpScreen(ModalScreen):
         self.dismiss()
 
 
+class ToolApprovalScreen(ModalScreen[PermissionDecision]):
+    """Three-choice approval modal for the per-session tool permission gate.
+
+    Returns a `PermissionDecision` via `dismiss()`. Multiline bash commands
+    disable the "Allow this session" choice per DEC-7 — the modal renders the
+    button as disabled in that case so it cannot accidentally produce an
+    `allow_session` decision.
+    """
+
+    DEFAULT_CSS = """
+    ToolApprovalScreen {
+        align: center middle;
+    }
+
+    ToolApprovalScreen > Container {
+        width: 80;
+        height: auto;
+        max-height: 30;
+        background: $surface;
+        border: solid $warning;
+        padding: 1 2;
+    }
+
+    ToolApprovalScreen .title {
+        text-align: center;
+        text-style: bold;
+        color: $warning;
+        margin-bottom: 1;
+    }
+
+    ToolApprovalScreen .label {
+        text-style: bold;
+        color: $text-accent;
+        margin-top: 1;
+    }
+
+    ToolApprovalScreen Button {
+        width: 1fr;
+        margin-top: 1;
+    }
+
+    ToolApprovalScreen .button-row {
+        height: auto;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "deny", "Deny"),
+        Binding("a", "allow_once", "Allow once"),
+        Binding("s", "allow_session", "Allow session"),
+        Binding("d", "deny", "Deny"),
+    ]
+
+    def __init__(
+        self,
+        *,
+        tool_name: str,
+        args: dict,
+        approval_key: str,
+        audit_category: str | None,
+        is_multiline_bash: bool,
+    ) -> None:
+        super().__init__()
+        self._tool_name = tool_name
+        self._args = args
+        self._approval_key = approval_key
+        self._audit_category = audit_category
+        self._is_multiline_bash = is_multiline_bash
+
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label(f"🔐 Approve tool: {self._tool_name}", classes="title")
+            yield Rule()
+
+            if self._tool_name == "bash":
+                yield Label("Command", classes="label")
+                yield Static(self._args.get("command", "") or "")
+                if self._audit_category:
+                    yield Label(f"Audit category: {self._audit_category}", classes="label")
+                if self._is_multiline_bash:
+                    yield Static(
+                        "[yellow]Multiline command — \"allow this session\" is disabled.[/]"
+                    )
+            else:
+                yield Label("Args", classes="label")
+                yield Static(_format_tool_args_for_display(self._args))
+
+            with Horizontal(classes="button-row"):
+                yield Button("Allow once [A]", id="allow-once-btn", variant="success")
+                yield Button(
+                    "Allow this session [S]",
+                    id="allow-session-btn",
+                    variant="primary",
+                    disabled=self._is_multiline_bash,
+                )
+                yield Button("Deny [D]", id="deny-btn", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if button_id == "allow-once-btn":
+            self.action_allow_once()
+        elif button_id == "allow-session-btn" and not self._is_multiline_bash:
+            self.action_allow_session()
+        else:
+            self.action_deny()
+
+    def action_allow_once(self) -> None:
+        self.dismiss(self._build_decision("allow_once"))
+
+    def action_allow_session(self) -> None:
+        if self._is_multiline_bash:
+            self.action_deny()
+            return
+        self.dismiss(self._build_decision("allow_session"))
+
+    def action_deny(self) -> None:
+        self.dismiss(self._build_decision("deny", reason="user_choice"))
+
+    def _build_decision(
+        self,
+        verdict: str,
+        *,
+        reason: str = "user_choice",
+    ) -> PermissionDecision:
+        return PermissionDecision(
+            decision=verdict,  # type: ignore[arg-type]
+            reason=reason,
+            approval_key=self._approval_key,
+            audit_category=self._audit_category,
+        )
+
+
 class GemCodeApp(App):
     """Main TUI application for Gem Code - Performance Optimized"""
     
@@ -1213,7 +1347,30 @@ class GemCodeApp(App):
                 """Handle tool call result"""
                 self.post_message(ToolResultMessage(tool_name, result))
                 self._update_context_display()
-            
+
+            async def request_tool_approval(tool_name: str, args: dict, ctx: dict):
+                """Open the approval modal and translate the result.
+
+                Any unexpected result (e.g. modal dismissed without a value)
+                resolves to `deny` so the gate fails closed.
+                """
+                screen = ToolApprovalScreen(
+                    tool_name=tool_name,
+                    args=args,
+                    approval_key=ctx.get("approval_key", tool_name),
+                    audit_category=ctx.get("audit_category"),
+                    is_multiline_bash=bool(ctx.get("is_multiline_bash")),
+                )
+                decision = await self.push_screen_wait(screen)
+                if isinstance(decision, PermissionDecision):
+                    return decision
+                return PermissionDecision(
+                    decision="deny",
+                    reason="modal_dismissed",
+                    approval_key=ctx.get("approval_key", tool_name),
+                    audit_category=ctx.get("audit_category"),
+                )
+
             # Run the chat
             await self.session_manager.session.chat(         #type: ignore
                 user_message,
@@ -1221,8 +1378,9 @@ class GemCodeApp(App):
                 on_content=on_content,
                 on_turn_end=on_turn_end,
                 on_tool_start=on_tool_start,
-                on_tool_result=on_tool_result
-            ) 
+                on_tool_result=on_tool_result,
+                request_tool_approval=request_tool_approval,
+            )
             
         except Exception as e:
             # Replace [ with \[ to prevent Rich markup parsing

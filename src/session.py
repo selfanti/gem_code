@@ -6,7 +6,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 from sentence_transformers import SentenceTransformer
 from rich.console import Console
 from ulid import ULID
@@ -20,8 +20,17 @@ from .config import (
 )
 from .context_manager import Context_Manager
 from .mcp_client import MCPClient, create_mcp_client_with_config, load_mcp_config_from_env
-from .memory import JsonlRandomAccess, message_to_memory_unit
+from .memory import JsonlRandomAccess, Memory_Unit, message_to_memory_unit
 from .models import ContextUsageSnapshot, FunctionCall, Message, ToolCall
+from .permissions import (
+    PermissionDecision,
+    SessionPermissionPolicy,
+    categorize_bash_command,
+    deny,
+    is_audit_content,
+    make_audit_content,
+    normalize_bash_command,
+)
 from .skill import Skill, SkillTool, format_one_skill_for_prompt, load_skills
 from .tool import (
     clone_tools,
@@ -79,6 +88,62 @@ def _assistant_text_to_response_output(text: Optional[str]) -> List[Dict[str, An
     return [{"type": "output_text", "text": text, "annotations": []}]
 
 
+# Approval callback contract.
+#
+# The TUI / CLI / non-interactive entry points each pass a closure with this
+# shape so the Session layer never needs to know what front-end is driving it.
+# The closure is responsible for translating whatever happens at the surface
+# (modal interaction, stdin prompt, automatic policy decision) into a
+# `PermissionDecision`. Returning `None` is treated as `deny` with reason
+# `unspecified` so a buggy front-end cannot silently approve a tool.
+ApprovalCallback = Callable[[str, Dict[str, Any], Dict[str, Any]], "Awaitable[Optional[PermissionDecision]]"]
+
+
+class _PermissionDenied(Exception):
+    """Sentinel raised by `Session.run_tool` when the gate denies a call.
+
+    Carrying a structured `PermissionDecision` lets `_handle_model_turn`
+    construct the bound `tool` reply and emit the audit entry without having
+    to re-derive context.
+    """
+
+    def __init__(self, decision: PermissionDecision) -> None:
+        super().__init__(decision.reason)
+        self.decision = decision
+
+
+def _compute_skills_fingerprint(skills_dir: Optional[str]) -> tuple[int, int]:
+    """Cheap recursive fingerprint over the skills directory.
+
+    Captures `(deepest_mtime_ns, file_count)` so a new SKILL.md drop or a
+    SKILL.md edit invalidates the cache. We deliberately walk the directory
+    tree (not just its top-level mtime) because creating a new subdirectory
+    does not always bump the parent's mtime on every filesystem.
+
+    Returns a tuple of zeros for a missing directory so the lazy-rebuild
+    path treats "no skills" as a stable fingerprint.
+    """
+    if not skills_dir:
+        return (0, 0)
+    root = Path(skills_dir).expanduser()
+    if not root.exists():
+        return (0, 0)
+    deepest = 0
+    count = 0
+    try:
+        for entry in root.rglob("*"):
+            try:
+                stat = entry.stat()
+            except OSError:
+                continue
+            count += 1
+            if stat.st_mtime_ns > deepest:
+                deepest = stat.st_mtime_ns
+    except OSError:
+        return (0, 0)
+    return (deepest, count)
+
+
 class Session:
     def __init__(self, config: Config, memory_access: JsonlRandomAccess):
         self.session_id: UUID = ULID().to_uuid()
@@ -100,6 +165,16 @@ class Session:
         self.context_manager = Context_Manager()
         self._token_encoder = self._build_token_encoder()
         self._tool_schema_token_estimate = 0
+        # Per-session permission policy (in-memory only). Whitelist + bash
+        # session-allow live here; resume/fork/clear_history reset to defaults
+        # because cross-session persistence is intentionally out of scope (AC-8.1).
+        self.policy = SessionPermissionPolicy.with_defaults(
+            permission_mode=config.permission_mode
+        )
+        # Lazy tool/embedding rebuild fingerprint (AC-7). Captured at init and
+        # refreshed at the top of `chat()` only when something the rebuild
+        # cares about has actually changed.
+        self._skills_dir_fingerprint: Optional[tuple[int, int]] = None
         
         self.context_usage = ContextUsageSnapshot(
             used_tokens=0,
@@ -239,7 +314,11 @@ class Session:
         return self.context_usage
 
     async def _initialize_system_prompt(self, skills_dir: Optional[str]) -> None:
-        system_prompt = get_system_prompt(self.workdir, self.config.security)
+        system_prompt = get_system_prompt(
+            self.workdir,
+            self.config.security,
+            predict_before_call_enabled=self.config.predict_before_call_enabled,
+        )
         if skills_dir:
             self.skills = await load_skills(skills_dir)
             skill_tools = [
@@ -385,7 +464,12 @@ class Session:
         on_tool_start: Optional[Callable[[str, dict], None]] = None,
         on_tool_result: Optional[Callable[[str, str], None]] = None,
         on_turn_end: Optional[Callable[[str, str, bool], None]] = None,
+        request_tool_approval: Optional[ApprovalCallback] = None,
     ) -> None:
+        # Lazy tool/embedding rebuild — runs only if something changed since
+        # the previous chat() invocation (AC-7).
+        await self._maybe_rebuild_tools()
+
         if self.api_mode == "responses":
             await self._chat_with_responses(
                 user_input,
@@ -394,6 +478,7 @@ class Session:
                 on_tool_start=on_tool_start,
                 on_tool_result=on_tool_result,
                 on_turn_end=on_turn_end,
+                request_tool_approval=request_tool_approval,
             )
             return
 
@@ -404,6 +489,7 @@ class Session:
             on_tool_start=on_tool_start,
             on_tool_result=on_tool_result,
             on_turn_end=on_turn_end,
+            request_tool_approval=request_tool_approval,
         )
 
     async def _chat_with_chat_completions(
@@ -414,6 +500,7 @@ class Session:
         on_tool_start: Optional[Callable[[str, dict], None]] = None,
         on_tool_result: Optional[Callable[[str, str], None]] = None,
         on_turn_end: Optional[Callable[[str, str, bool], None]] = None,
+        request_tool_approval: Optional[ApprovalCallback] = None,
     ) -> None:
         message = Message(role="user", content=user_input)
         self.history.append(message)
@@ -498,6 +585,7 @@ class Session:
                 on_turn_end=on_turn_end,
                 on_tool_start=on_tool_start,
                 on_tool_result=on_tool_result,
+                request_tool_approval=request_tool_approval,
             )
 
             if not has_tool_calls:
@@ -511,6 +599,7 @@ class Session:
         on_tool_start: Optional[Callable[[str, dict], None]] = None,
         on_tool_result: Optional[Callable[[str, str], None]] = None,
         on_turn_end: Optional[Callable[[str, str, bool], None]] = None,
+        request_tool_approval: Optional[ApprovalCallback] = None,
     ) -> None:
         message = Message(role="user", content=user_input)
         self.history.append(message)
@@ -671,6 +760,7 @@ class Session:
                 on_turn_end=on_turn_end,
                 on_tool_start=on_tool_start,
                 on_tool_result=on_tool_result,
+                request_tool_approval=request_tool_approval,
             )
 
             if not normalized_tool_calls:
@@ -687,6 +777,7 @@ class Session:
         on_turn_end: Optional[Callable[[str, str, bool], None]],
         on_tool_start: Optional[Callable[[str, dict], None]],
         on_tool_result: Optional[Callable[[str, str], None]],
+        request_tool_approval: Optional[ApprovalCallback] = None,
     ) -> None:
         message = Message(
             role="assistant",
@@ -704,7 +795,11 @@ class Session:
             self.history,
             self.memory_acess,
             user_prompt=user_prompt,
-            system_prompt=get_system_prompt(self.workdir, self.config.security),
+            system_prompt=get_system_prompt(
+                self.workdir,
+                self.config.security,
+                predict_before_call_enabled=self.config.predict_before_call_enabled,
+            ),
         )
         self._recalculate_context_usage()
 
@@ -724,7 +819,22 @@ class Session:
                 console.print("")
                 console.print(f"🛠️  Executing tool: {tool_name}")
 
-            result = await self.run_tool(tool_name, args, self.workdir)
+            decision_for_audit: Optional[PermissionDecision] = None
+            try:
+                gate_decision = await self._check_permission(
+                    tool_name,
+                    args,
+                    request_tool_approval=request_tool_approval,
+                )
+                if gate_decision is not None:
+                    # Allowed by either the standing whitelist or the user.
+                    decision_for_audit = gate_decision
+                result = await self.run_tool(tool_name, args, self.workdir)
+            except _PermissionDenied as denied:
+                decision_for_audit = denied.decision
+                # AC-4 protocol invariant: emit a `tool` reply bound to the
+                # original `tool_call_id` so the next API request stays valid.
+                result = f"<user_denied: {denied.decision.reason}>"
 
             if on_tool_result:
                 on_tool_result(tool_name, result)
@@ -740,8 +850,169 @@ class Session:
             self.memory_acess.add_line(memory_unit.model_dump_json())
             self._recalculate_context_usage()
 
+            # AC-9 audit log. Transcript-only — `_emit_permission_audit` does
+            # NOT touch `self.history`.
+            if decision_for_audit is not None:
+                self._emit_permission_audit(tool_name, decision_for_audit)
+
         if not on_tool_start and not on_tool_result:
             console.print("🔄 REPEAT")
+
+    async def _check_permission(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        request_tool_approval: Optional[ApprovalCallback],
+    ) -> Optional[PermissionDecision]:
+        """Consult the policy and the approval callback before tool dispatch.
+
+        Returns a `PermissionDecision` when the user explicitly approved this
+        call (so the caller can record it for audit), or `None` when the
+        standing whitelist already permits the tool. Raises `_PermissionDenied`
+        when the call is denied (silently in non-interactive mode, or after
+        the user explicitly denies it).
+
+        The function never mutates `Session.history` — predictions land in the
+        model's own visible turn (AC-5.3) and audit entries go through
+        `_emit_permission_audit`, which writes only to the JSONL transcript.
+        """
+        if not self.config.permission_gate_enabled:
+            return None
+
+        if self.policy.is_whitelisted(tool_name, args):
+            return None
+
+        audit_category: Optional[str] = None
+        approval_key = self.policy.approval_key_for(tool_name, args)
+        if tool_name == "bash":
+            audit_category = categorize_bash_command(args.get("command", "") or "")
+
+        if self.policy.permission_mode == "auto_deny":
+            raise _PermissionDenied(
+                deny(
+                    "non_interactive",
+                    approval_key=approval_key,
+                    audit_category=audit_category,
+                )
+            )
+
+        if self.policy.permission_mode == "auto_allow_safe":
+            raise _PermissionDenied(
+                deny(
+                    "auto_allow_safe_blocks_non_default",
+                    approval_key=approval_key,
+                    audit_category=audit_category,
+                )
+            )
+
+        if request_tool_approval is None:
+            raise _PermissionDenied(
+                deny(
+                    "no_approval_callback",
+                    approval_key=approval_key,
+                    audit_category=audit_category,
+                )
+            )
+
+        _, is_multiline = (
+            normalize_bash_command(args.get("command", "") or "")
+            if tool_name == "bash"
+            else ("", False)
+        )
+        context: Dict[str, Any] = {
+            "tool_name": tool_name,
+            "args": args,
+            "approval_key": approval_key,
+            "audit_category": audit_category,
+            "is_multiline_bash": is_multiline,
+            "workdir": self.workdir,
+        }
+
+        try:
+            decision = await request_tool_approval(tool_name, args, context)
+        except Exception as exc:
+            raise _PermissionDenied(
+                deny(
+                    f"callback_error: {exc}",
+                    approval_key=approval_key,
+                    audit_category=audit_category,
+                )
+            )
+
+        if decision is None:
+            raise _PermissionDenied(
+                deny(
+                    "unspecified",
+                    approval_key=approval_key,
+                    audit_category=audit_category,
+                )
+            )
+
+        if decision.audit_category is None and audit_category is not None:
+            decision = PermissionDecision(
+                decision=decision.decision,
+                reason=decision.reason,
+                approval_key=decision.approval_key or approval_key,
+                visible_summary=decision.visible_summary,
+                audit_category=audit_category,
+            )
+
+        if decision.decision == "deny":
+            raise _PermissionDenied(decision)
+
+        if decision.decision == "allow_session":
+            self.policy.record(tool_name, decision)
+
+        return decision
+
+    def _emit_permission_audit(
+        self,
+        tool_name: str,
+        decision: PermissionDecision,
+    ) -> None:
+        """Append a `[permission]` audit entry to the JSONL transcript only."""
+        audit_unit = Memory_Unit(
+            type="message",
+            role="system",
+            content=make_audit_content(decision, tool_name),
+        )
+        self.memory_acess.add_line(audit_unit.model_dump_json())
+
+    async def _maybe_rebuild_tools(self) -> None:
+        """Lazy tool/embedding rebuild driven by `skills_dir` fingerprint."""
+        skills_dir = self.config.skills_dir
+        new_fingerprint = _compute_skills_fingerprint(skills_dir)
+        if new_fingerprint == self._skills_dir_fingerprint:
+            return
+
+        if self._skills_dir_fingerprint is None:
+            # First chat() entry: lock in the baseline so we do not redo the
+            # work that `_initialize_system_prompt` already did.
+            self._skills_dir_fingerprint = new_fingerprint
+            return
+
+        rebuilt = clone_tools()
+        if skills_dir:
+            self.skills = await load_skills(skills_dir)
+            rebuilt.extend(
+                SkillTool(skill.name, skill.description).to_openai_function()
+                for skill in self.skills
+            )
+        if self.mcp_client is not None:
+            try:
+                rebuilt.extend(self.mcp_client.get_all_tools_openai_format())
+            except Exception:
+                pass
+
+        self._all_tools = rebuilt
+        self._skills_dir_fingerprint = new_fingerprint
+
+        if self.config.use_tool_search and self.embedding_model is not None:
+            self.tools_embeddings = build_tool_embedding(
+                self.embedding_model,
+                self._all_tools,
+            )
 
     async def chat_one_step(self, user_input: str) -> str:
         """Run a non-tool model step used by automatic compaction.
@@ -888,7 +1159,18 @@ class Session:
         self._recalculate_context_usage()
 
     def clear_history(self) -> None:
+        # AC-8.1: clear_history starts the next interaction with the AC-1
+        # default whitelist. Permission decisions are intentionally not
+        # carried across this boundary.
+        self.policy.reset_to_defaults()
         self.history = [
-            Message(role="system", content=get_system_prompt(self.workdir, self.config.security))
+            Message(
+                role="system",
+                content=get_system_prompt(
+                    self.workdir,
+                    self.config.security,
+                    predict_before_call_enabled=self.config.predict_before_call_enabled,
+                ),
+            )
         ]
         self._recalculate_context_usage()

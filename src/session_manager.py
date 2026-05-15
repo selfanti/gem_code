@@ -38,19 +38,29 @@ class SessionManager:
         if not self.transcript_path.exists():
             raise FileNotFoundError(f"Session {session_id} not found")
 
+        # AC-8.1: per-session whitelist does not survive resume.
+        self.session.policy.reset_to_defaults()
+
         # Use rehydration instead of a raw message load so resumed sessions can
         # recover the latest compaction summary and a small slice of recent
         # pre-boundary context.
         self.session.set_history(
             self.session.context_manager.rehydration(
                 self.memory_access,
-                system_prompt=get_system_prompt(self.config.workdir, self.config.security),
+                system_prompt=get_system_prompt(
+                    self.config.workdir,
+                    self.config.security,
+                    predict_before_call_enabled=self.config.predict_before_call_enabled,
+                ),
             )
         )
 
     def fork(self) -> None:
         old_history = list(self.session.get_history())
         self._rebind_transcript(str(ULID()))
+
+        # AC-8.1: per-session whitelist does not survive fork.
+        self.session.policy.reset_to_defaults()
 
         # Re-serialize the current in-memory history into the new transcript
         # instead of copying raw bytes. That keeps the transcript index in sync

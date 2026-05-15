@@ -5,6 +5,7 @@ from typing import Literal, Optional
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
+from .permissions import PermissionMode, policy_mode_from_env
 from .security import SecuritySettings, load_security_settings
 
 
@@ -23,6 +24,10 @@ class Config:
     api_mode: ApiMode
     security: SecuritySettings
     use_tool_search: bool = True
+    permission_gate_enabled: bool = True
+    predict_before_call_enabled: bool = False
+    self_discovery_enabled: bool = False
+    permission_mode: PermissionMode = "strict"
 
 
 def _expand_path(path: Optional[str]) -> Optional[str]:
@@ -41,7 +46,7 @@ def load_config() -> Config:
     mandatory.
     """
 
-    load_dotenv(override=True)
+    load_dotenv()
 
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL")
@@ -90,7 +95,23 @@ def load_config() -> Config:
         api_mode=api_mode,
         security=security,
         use_tool_search=os.getenv("USE_TOOL_SEARCH", "false").lower() == "true",
+        permission_gate_enabled=_parse_bool_env("GEM_CODE_PERMISSION_GATE_ENABLED", True),
+        predict_before_call_enabled=_parse_bool_env("GEM_CODE_PREDICT_BEFORE_CALL", False),
+        self_discovery_enabled=_parse_bool_env("GEM_CODE_SELF_DISCOVERY", False),
+        permission_mode=policy_mode_from_env(default="strict"),
     )
+
+
+def _parse_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    return default
 
 
 SYSTEM_PROMPT = """
@@ -142,17 +163,41 @@ SYSTEM_PROMPT = """
 """
 
 
+PREDICT_BEFORE_CALL_CLAUSE = """
+## 工具调用前的预测要求 (Predict before call)
+当你即将调用任何工具之前，必须在 *visible* 输出（reasoning 或正式回复）中先用 1–2 句话简短预测：
+- 这次调用最可能产生的可观察副作用（写入哪些文件、是否发起网络调用、是否启动子进程）。
+- 如果该工具可能修改用户工作区或外部状态，明确指出来。
+然后再判断是否真的发出 tool_call。
+预测必须出现在你可见的回复中（不要把它藏在隐式的 chain-of-thought 里）。
+仅本会话启用 GEM_CODE_PREDICT_BEFORE_CALL=true 时该规则生效；其他情况下忽略本节。
+"""
+
+
 def get_system_prompt(
     workdir: str,
     security: Optional[SecuritySettings] = None,
+    *,
+    predict_before_call_enabled: bool = False,
 ) -> str:
-    """Render the system prompt against the configured work directory."""
+    """Render the system prompt against the configured work directory.
+
+    When `predict_before_call_enabled` is True (driven by the
+    `GEM_CODE_PREDICT_BEFORE_CALL` env flag), append the predict-before-call
+    clause so the main LLM produces a brief visible side-effect prediction
+    before emitting any tool call. This is a system-prompt augmentation only —
+    the runtime tool-call path issues no extra LLM round-trip and the gate
+    never mutates `Session.history`.
+    """
 
     rendered = SYSTEM_PROMPT.replace("{workdir}", str(Path(workdir).expanduser()))
-    return rendered.replace(
+    rendered = rendered.replace(
         "{security_summary}",
         security.summary() if security is not None else "sandbox on; policy hidden",
     )
+    if predict_before_call_enabled:
+        rendered = rendered + PREDICT_BEFORE_CALL_CLAUSE
+    return rendered
 
 
 def resolve_api_mode(config: Config) -> Literal["chat_completions", "responses"]:

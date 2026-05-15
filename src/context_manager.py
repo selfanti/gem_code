@@ -4,6 +4,7 @@ from typing import Final, Optional
 
 from .memory import JsonlRandomAccess, Memory_Unit
 from .models import Message
+from .permissions import is_audit_content
 
 MAX_CONTEXT_SIZE: Final[int] = 200 * 1000
 MICRO_COMPACTION_THRESHOLD: Final[int] = int(0.6 * MAX_CONTEXT_SIZE)
@@ -159,6 +160,10 @@ class Context_Manager:
             memory_message = Memory_Unit.model_validate(data)
             history_message=memory_message.to_message()
             if history_message is not None:
+                # AC-9: `[permission]` audit entries are transcript-only and
+                # MUST NOT be rehydrated into model-visible context.
+                if is_audit_content(history_message.content):
+                    continue
                 message_recent.append(self._trim_message_for_rehydration(history_message))
                 if history_message.role=="tool":
                     count_tool+=1

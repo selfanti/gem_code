@@ -24,3 +24,7 @@ dependencies = [
 [project.scripts]
 gem-code = "main:main"
 gem = "main:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
