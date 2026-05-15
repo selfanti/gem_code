@@ -16,3 +16,4 @@ embedding_model/*
 test.py
 .codex
 .gem-code
+.humanize/skill/
