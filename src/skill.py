@@ -82,7 +82,7 @@ def format_skill_for_prompt(skills: List[Skill]) -> str:
 你是 Gem Code CLI，拥有以下 skill：
 {sections}
 
-使用说明：当用户请求与某个 skill 相关时，请参考对应的 SKILL.md 内容来指导你的回答，不要描述你要调用哪个技能。
+使用说明：当用户请求与某个 skill 相关时，一定要调用该工具获得 SKILL.md 内容来指导你的回答。
 """
 
 
@@ -96,7 +96,7 @@ class SkillTool:
             "type": "function",
             "function": {
                 "name": f"skill__{self.name}",
-                "description": self.description,
+                "description": f"{self.description}",
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
