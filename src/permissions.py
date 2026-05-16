@@ -38,6 +38,18 @@ filter and the gate cannot drift apart.
 
 
 DEFAULT_WHITELIST_NAMES: frozenset[str] = frozenset({"read_file", "Glob", "Grep"})
+# Harbor benchmark override: uncomment this line and comment the line above to
+# allow every built-in tool without interactive approval during non-interactive
+# evaluation runs.
+# DEFAULT_WHITELIST_NAMES: frozenset[str] = frozenset({
+#     "bash",
+#     "read_file",
+#     "write_file",
+#     "StrReplaceFile",
+#     "fetch_url",
+#     "Glob",
+#     "Grep",
+# })
 """Initial AC-1 whitelist for fresh sessions.
 
 Read-only tools only. The `skill__*` prefix is allowed via

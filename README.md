@@ -63,6 +63,165 @@ uv run python main.py "你的问题"  # 一次性提问
 uv run python main.py --cli --once "你的问题"  # 发送一次后退出，适合自动化/评测
 ```
 
+## Benchmark / Harbor 评测
+
+本仓库已经接入 Harbor Installed Agent，入口在 `evaluation/my_external_agent.py`。评测时 Harbor 会把当前 gem-code 源码上传到任务环境，运行 `evaluation/run_gem_code_once.py`，并把 JSONL transcript 转成 Harbor ATIF trajectory。评测默认禁用 MCP，并强制使用非交互权限模式，避免 benchmark 过程中等待人工审批。
+
+### 前置条件
+
+1. 安装依赖：
+
+```bash
+uv sync
+```
+
+2. 配置 `.env` 或 shell 环境：
+
+```bash
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=https://api.minimaxi.com/v1
+OPENAI_MODEL=MiniMax-M2.5
+OPENAI_API_MODE=auto
+```
+
+3. 确保 Docker 可用。SWE-bench Verified 和 Terminal-Bench 都是容器化任务，首次运行会拉取/构建镜像，耗时较长。
+
+### 本地 smoke matrix
+
+用于快速回归 gem-code 的 Harbor adapter、上下文管理、TUI/CLI 启动保护等本项目自身行为，不是正式公开 benchmark：
+
+```bash
+uv run python evaluation/run_harbor_matrix.py \
+  --job-name gem-code-smoke-10 \
+  --n-concurrent 1
+```
+
+只跑某个本地任务：
+
+```bash
+uv run python evaluation/run_harbor_matrix.py \
+  --job-name gem-code-smoke-one \
+  --task-name config-defaults
+```
+
+报告输出到：
+
+```text
+evaluation/reports/<job-name>.md
+evaluation/reports/<job-name>.json
+```
+
+原始 Harbor job、stdout/stderr、metadata 和 trajectory 输出到：
+
+```text
+evaluation/jobs/<job-name>/
+```
+
+### SWE-bench Verified
+
+推荐使用仓库内封装好的 runner。SWE-bench 任务仓库在容器内挂载到 `/testbed`，runner 已经通过 `--ak agent_workdir=/testbed` 对齐 gem-code 的 `WORKDIR`。
+
+先跑 1 个 smoke task：
+
+```bash
+uv run python evaluation/run_swebench_verified.py \
+  --job-name gem-code-swebench-smoke-1 \
+  --n-tasks 1 \
+  --n-concurrent 1
+```
+
+跑指定任务：
+
+```bash
+uv run python evaluation/run_swebench_verified.py \
+  --job-name gem-code-swebench-sympy-19346 \
+  --task-name sympy__sympy-19346 \
+  --n-tasks 1
+```
+
+扩大采样：
+
+```bash
+uv run python evaluation/run_swebench_verified.py \
+  --job-name gem-code-swebench-smoke-10 \
+  --n-tasks 10 \
+  --n-concurrent 1
+```
+
+只汇总已有 job，不重新运行：
+
+```bash
+uv run python evaluation/run_swebench_verified.py \
+  --job-name gem-code-swebench-smoke-10 \
+  --skip-run
+```
+
+Harbor registry 中对应数据集为 `swebench-verified@1.0`，当前 registry 标注为 500 个任务。
+
+### Terminal-Bench
+
+当前仓库还没有单独的 `run_terminal_bench.py` wrapper，但可以直接复用同一个 Harbor Installed Agent。Terminal-Bench 2.0 在 Harbor registry 中的数据集名是 `terminal-bench@2.0`，当前 registry 标注为 89 个任务；也可以先用 `terminal-bench-sample@2.0` 跑 10 个 sample 任务。
+
+先跑 1 个 Terminal-Bench task：
+
+```bash
+uv run harbor run \
+  --job-name gem-code-terminal-bench-smoke-1 \
+  --jobs-dir evaluation/jobs \
+  --agent-import-path evaluation.my_external_agent:GemCodeInstalledAgent \
+  --dataset terminal-bench@2.0 \
+  --n-tasks 1 \
+  --n-concurrent 1 \
+  --agent-setup-timeout-multiplier 4 \
+  --debug \
+  --model "$OPENAI_MODEL" \
+  --ae OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --ae OPENAI_BASE_URL="$OPENAI_BASE_URL" \
+  --ae OPENAI_MODEL="$OPENAI_MODEL" \
+  --ae OPENAI_API_MODE="${OPENAI_API_MODE:-auto}"
+```
+
+跑 sample 数据集：
+
+```bash
+uv run harbor run \
+  --job-name gem-code-terminal-bench-sample \
+  --jobs-dir evaluation/jobs \
+  --agent-import-path evaluation.my_external_agent:GemCodeInstalledAgent \
+  --dataset terminal-bench-sample@2.0 \
+  --n-tasks 10 \
+  --n-concurrent 1 \
+  --agent-setup-timeout-multiplier 4 \
+  --debug \
+  --model "$OPENAI_MODEL" \
+  --ae OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --ae OPENAI_BASE_URL="$OPENAI_BASE_URL" \
+  --ae OPENAI_MODEL="$OPENAI_MODEL" \
+  --ae OPENAI_API_MODE="${OPENAI_API_MODE:-auto}"
+```
+
+跑指定 Terminal-Bench 任务：
+
+```bash
+uv run harbor run \
+  --job-name gem-code-terminal-bench-one \
+  --jobs-dir evaluation/jobs \
+  --agent-import-path evaluation.my_external_agent:GemCodeInstalledAgent \
+  --dataset terminal-bench@2.0 \
+  --task-name <task-name> \
+  --n-tasks 1 \
+  --n-concurrent 1 \
+  --agent-setup-timeout-multiplier 4 \
+  --debug \
+  --model "$OPENAI_MODEL" \
+  --ae OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --ae OPENAI_BASE_URL="$OPENAI_BASE_URL" \
+  --ae OPENAI_MODEL="$OPENAI_MODEL" \
+  --ae OPENAI_API_MODE="${OPENAI_API_MODE:-auto}"
+```
+
+注意：Terminal-Bench 任务通常更偏通用终端操作。gem-code 当前评测 runner 会在非交互模式下自动拒绝默认白名单之外的工具调用；如果要把 `bash` 作为正式 benchmark 能力放开，需要为非交互评测设计更细的安全策略，而不是简单绕过权限门禁。
+
 ## 使用方法
 
 ### TUI 快捷键
@@ -366,16 +525,16 @@ message = accessor.get_line(index)
   - 参考: <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports>
 - [x] 基础 Harbor Installed Agent 适配骨架
   - 参考: <https://harborframework.com/docs/agents>
+- [x] 为大模型增加预测然后思考的设置
 - [ ] 多 API 支持（DeepSeek、Kimi、OpenAI 等）
 - [ ] Agent Teams（多 Agent 协作）（多agent的有效性有待商榷，暂时搁置）
   - 领导 Agent 任务分配
   - 基于文件系统的 Agent 间通信
   - 参考文献: <https://decodeclaude.com/teams-and-swarms/>
 - [x] 基于 Harbor 的完整 Coding Agent 测试矩阵
-  - 已补充 Harbor Installed Agent 适配、ATIF 轨迹落盘、结构化运行元数据采集，以及面向官方 `swebench-verified@1.0` 数据集的 runner：`evaluation/run_swebench_verified.py`
-  - 本地 synthetic smoke matrix 仍保留在 `evaluation/harbor_matrix/`，仅用于快速回归 adapter、context 管理和 TUI/CLI 行为，不再作为正式 benchmark 主入口
-  - 初始 SWE-bench Verified 采样运行示例：
-    - `uv run python evaluation/run_swebench_verified.py --n-tasks 10`
+  - 已补充 Harbor Installed Agent 适配、ATIF 轨迹落盘、结构化运行元数据采集，以及面向 `swebench-verified@1.0` 的 runner：`evaluation/run_swebench_verified.py`
+  - 本地 synthetic smoke matrix 保留在 `evaluation/harbor_matrix/`，用于快速回归 adapter、context 管理和 TUI/CLI 行为
+  - 使用方式见上文 “Benchmark / Harbor 评测”
   - 参考: <https://harborframework.com/docs/agents>
 - [ ] 增加用户交互（human in the loop），针对开发者，主动披露下一步行动的目的和具体操作。支持agent运行时的interupt。便于开发者及时阻止错误方向
 - [ ] Plan Mode
@@ -383,7 +542,7 @@ message = accessor.get_line(index)
 - [ ] 增加审查者角色的LLM
 - [ ] subagent
 - [ ] 基于slime框架实现Agentic RL
-
+- [ ] 自进化能力
 ## 安全提示
 
 ⚠️ 请勿将包含 API 密钥的 `.env` 文件提交到版本控制。

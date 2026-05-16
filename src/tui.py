@@ -35,6 +35,7 @@ from textual.reactive import reactive
 from textual.binding import Binding
 from textual.message import Message
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from rich.syntax import Syntax
 from rich.text import Text
 
@@ -1136,6 +1137,181 @@ class ToolApprovalScreen(ModalScreen[PermissionDecision]):
         )
 
 
+class ToolApprovalInline(Widget):
+    """Compact in-layout approval prompt for one pending tool call."""
+
+    can_focus = True
+
+    DEFAULT_CSS = """
+    ToolApprovalInline {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+        background: $warning-darken-3;
+        border-top: solid $warning;
+    }
+
+    ToolApprovalInline.hidden {
+        display: none;
+    }
+
+    ToolApprovalInline .approval-row {
+        width: 100%;
+        height: auto;
+        align: left middle;
+    }
+
+    ToolApprovalInline .approval-title {
+        width: auto;
+        min-width: 12;
+        text-style: bold;
+        color: $warning;
+        margin-right: 1;
+    }
+
+    ToolApprovalInline .approval-summary {
+        width: 1fr;
+        color: $text;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-right: 1;
+    }
+
+    ToolApprovalInline .approval-security {
+        width: auto;
+        max-width: 14;
+        color: $text-muted;
+        margin-right: 1;
+    }
+
+    ToolApprovalInline Button {
+        width: auto;
+        min-width: 3;
+        margin-left: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("a", "allow_once", "Allow once", show=False),
+        Binding("s", "allow_session", "Allow session", show=False),
+        Binding("d,escape", "deny", "Deny", show=False),
+    ]
+
+    def __init__(self, config: Config, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._config = config
+        self._future: asyncio.Future[PermissionDecision] | None = None
+        self._tool_name = ""
+        self._args: dict = {}
+        self._approval_key = ""
+        self._audit_category: str | None = None
+        self._is_multiline_bash = False
+        self.add_class("hidden")
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="approval-row"):
+            yield Label("Approve", classes="approval-title")
+            yield Label("", classes="approval-summary", id="approval-summary")
+            yield Label("", classes="approval-security", id="approval-security")
+            yield Button("A", id="approval-once", variant="success")
+            yield Button("S", id="approval-session", variant="primary")
+            yield Button("D", id="approval-deny", variant="error")
+
+    async def request(
+        self,
+        *,
+        tool_name: str,
+        args: dict,
+        approval_key: str,
+        audit_category: str | None,
+        is_multiline_bash: bool,
+    ) -> PermissionDecision:
+        if self._future is not None and not self._future.done():
+            self._future.set_result(
+                self._build_decision("deny", reason="replaced_by_new_approval")
+            )
+
+        loop = asyncio.get_running_loop()
+        self._future = loop.create_future()
+        self._tool_name = tool_name
+        self._args = args
+        self._approval_key = approval_key
+        self._audit_category = audit_category
+        self._is_multiline_bash = is_multiline_bash
+        self._render_request()
+        self.remove_class("hidden")
+        self.focus()
+
+        try:
+            return await self._future
+        finally:
+            self.add_class("hidden")
+            self._future = None
+
+    def _render_request(self) -> None:
+        summary = self._summary_text()
+        if self._is_multiline_bash:
+            summary += " | session disabled for multiline command"
+        security = ""
+        if self._tool_name in {"fetch_url", "bash"}:
+            security = f"net: {self._config.security.network_summary()}"
+
+        self.query_one("#approval-summary", Label).update(Text(summary))
+        self.query_one("#approval-security", Label).update(Text(security))
+        self.query_one("#approval-session", Button).disabled = self._is_multiline_bash
+
+    def _summary_text(self) -> str:
+        if self._tool_name == "bash":
+            command = str(self._args.get("command", "") or "").replace("\n", "\\n")
+            category = f" [{self._audit_category}]" if self._audit_category else ""
+            return f"bash{category}: {command}"
+        if self._tool_name == "fetch_url":
+            return f"fetch_url: {self._args.get('url', '')}"
+        return f"{self._tool_name}: {_format_tool_args_for_display(self._args)}"
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if button_id == "approval-once":
+            self.action_allow_once()
+        elif button_id == "approval-session":
+            self.action_allow_session()
+        elif button_id == "approval-deny":
+            self.action_deny()
+
+    def action_allow_once(self) -> None:
+        self._resolve(self._build_decision("allow_once"))
+
+    def action_allow_session(self) -> None:
+        if self._is_multiline_bash:
+            self.action_deny()
+            return
+        self._resolve(self._build_decision("allow_session"))
+
+    def action_deny(self) -> None:
+        self._resolve(self._build_decision("deny", reason="user_choice"))
+
+    def cancel_pending(self, reason: str) -> None:
+        if self._future is not None and not self._future.done():
+            self._resolve(self._build_decision("deny", reason=reason))
+
+    def _resolve(self, decision: PermissionDecision) -> None:
+        if self._future is not None and not self._future.done():
+            self._future.set_result(decision)
+
+    def _build_decision(
+        self,
+        verdict: str,
+        *,
+        reason: str = "user_choice",
+    ) -> PermissionDecision:
+        return PermissionDecision(
+            decision=verdict,  # type: ignore[arg-type]
+            reason=reason,
+            approval_key=self._approval_key,
+            audit_category=self._audit_category,
+        )
+
+
 class GemCodeApp(App):
     """Main TUI application for Gem Code - Performance Optimized"""
     
@@ -1233,6 +1409,9 @@ class GemCodeApp(App):
                 
                 # Status bar
                 yield StatusBar(id="status-bar")
+
+                # Compact in-layout tool approval prompt
+                yield ToolApprovalInline(self.config, id="tool-approval")
                 
                 # Input area
                 yield InputArea(id="input-area")
@@ -1349,19 +1528,19 @@ class GemCodeApp(App):
                 self._update_context_display()
 
             async def request_tool_approval(tool_name: str, args: dict, ctx: dict):
-                """Open the approval modal and translate the result.
+                """Ask for approval inside the main TUI layout.
 
-                Any unexpected result (e.g. modal dismissed without a value)
-                resolves to `deny` so the gate fails closed.
+                Any unexpected result resolves to `deny` so the gate fails
+                closed while preserving the tool-call protocol.
                 """
-                screen = ToolApprovalScreen(
+                approval = self.query_one("#tool-approval", ToolApprovalInline)
+                decision = await approval.request(
                     tool_name=tool_name,
                     args=args,
                     approval_key=ctx.get("approval_key", tool_name),
                     audit_category=ctx.get("audit_category"),
                     is_multiline_bash=bool(ctx.get("is_multiline_bash")),
                 )
-                decision = await self.push_screen_wait(screen)
                 if isinstance(decision, PermissionDecision):
                     return decision
                 return PermissionDecision(
@@ -1490,7 +1669,8 @@ class GemCodeApp(App):
     def action_escape(self) -> None:
         """Handle escape key"""
         if self._is_generating:
-            self.notify("Cannot cancel while generating", title="Info")
+            approval = self.query_one("#tool-approval", ToolApprovalInline)
+            approval.cancel_pending("user_escape")
         else:
             self.query_one("#input-area", InputArea).focus()
     
