@@ -413,19 +413,25 @@ async def run_read_file(
 
     file_path = _resolve_path_in_workdir(workdir, path)
     async with aiofiles.open(file_path, "r", encoding="utf-8") as handle:
-        if start_line is None and end_line is None:
-            content=await handle.read()
-            return content
+        content = await handle.read()
 
-        selected_lines: List[str] = []
-        total_lines = 0
-        async for line in handle:
-            total_lines += 1
-            if total_lines < effective_start_line:
-                continue
-            if end_line is not None and total_lines > end_line:
-                break
-            selected_lines.append(f"{total_lines}: {line.rstrip(chr(10))}")
+    if start_line is None and end_line is None:
+        return content
+
+    # Deterministic line-range read: split the buffer once and slice. The
+    # earlier `async for line in handle` path could spin under some
+    # filesystem layers (Codex's sandbox observed it as a hang), and a
+    # single `read() + splitlines()` is also cheaper for the small files
+    # we expect callers to slice on demand.
+    lines = content.splitlines()
+    total_lines = len(lines)
+    end_index = end_line if end_line is not None else total_lines
+    end_index = min(end_index, total_lines)
+
+    selected_lines: List[str] = []
+    if effective_start_line <= total_lines:
+        for line_no in range(effective_start_line, end_index + 1):
+            selected_lines.append(f"{line_no}: {lines[line_no - 1]}")
 
     if selected_lines:
         return "\n".join(selected_lines)

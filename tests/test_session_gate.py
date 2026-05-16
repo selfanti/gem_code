@@ -728,3 +728,125 @@ def test_handle_model_turn_denial_writes_exactly_one_audit_entry(tmp_path: Path)
     assert len(tool_replies) == 1
     assert tool_replies[0].tool_call_id == "c1"
     assert "<user_denied:" in (tool_replies[0].content or "")
+
+
+# -- Round 3: gate canonicalizes approval_key + audit_category --------------
+
+
+def test_callback_supplied_approval_key_is_overridden_by_gate(tmp_path: Path) -> None:
+    """AC-3.1 / AC-9: a callback returning a wrong `approval_key` MUST NOT
+    persist a different command than the one being approved.
+
+    Codex round-2 review found that a misbehaving callback could approve
+    `bash {"command": "git status"}` with `approval_key="git status --short"`
+    and the gate would whitelist `git status --short` while leaving the
+    actual command unapproved. The gate now rebuilds the decision with the
+    gate-computed `approval_key` so callbacks cannot mis-route allow-session
+    decisions.
+    """
+    session = _make_session(tmp_path)
+
+    async def fake_dispatch(name, args, workdir):
+        return "ran"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    async def misbehaving_callback(tool_name, args, ctx):
+        # The callback returns a DIFFERENT command than the one being
+        # approved. The gate must override `approval_key` with the
+        # gate-computed value (`git status`).
+        return PermissionDecision(
+            decision="allow_session",
+            reason="user_choice",
+            approval_key="git status --short",
+        )
+
+    asyncio.run(
+        session.run_tool(
+            "bash",
+            {"command": "git status"},
+            session.workdir,
+            request_tool_approval=misbehaving_callback,
+        )
+    )
+
+    # The gate canonicalized the key — the actual command is now whitelisted.
+    assert session.policy.is_whitelisted("bash", {"command": "git status"})
+    # The callback's wrong key did NOT make it into the whitelist.
+    assert not session.policy.is_whitelisted(
+        "bash", {"command": "git status --short"}
+    )
+
+
+def test_callback_wrong_approval_key_is_overridden_in_audit(tmp_path: Path) -> None:
+    """AC-9: even when the callback returns a wrong `approval_key`, the
+    audit row records the gate-computed (correct) command.
+    """
+    session = _make_session(tmp_path)
+
+    async def fake_dispatch(name, args, workdir):
+        return "ran"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    async def misbehaving_callback(tool_name, args, ctx):
+        return PermissionDecision(
+            decision="allow_once",
+            reason="user_choice",
+            approval_key="rm -rf /",  # bogus / dangerous-looking key
+        )
+
+    asyncio.run(
+        session.run_tool(
+            "bash",
+            {"command": "git status"},
+            session.workdir,
+            request_tool_approval=misbehaving_callback,
+        )
+    )
+
+    audit = _read_audit_lines(session.transcript_path)
+    assert len(audit) == 1
+    content = audit[0].content or ""
+    assert 'command="git status"' in content
+    # The misbehaving callback's bogus key MUST NOT appear in the audit row.
+    assert "rm -rf /" not in content
+
+
+def test_denied_callback_with_wrong_approval_key_audits_actual_command(
+    tmp_path: Path,
+) -> None:
+    """AC-9 dedupe + canonicalization: the deny path also reads the
+    gate-computed key, not whatever the callback returned.
+    """
+    from src.session import _PermissionDenied
+
+    session = _make_session(tmp_path)
+
+    async def fake_dispatch(name, args, workdir):
+        return "should_not_reach_here"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    async def deny_with_wrong_key(tool_name, args, ctx):
+        return PermissionDecision(
+            decision="deny",
+            reason="user_choice",
+            approval_key="something_else_entirely",
+        )
+
+    with pytest.raises(_PermissionDenied):
+        asyncio.run(
+            session.run_tool(
+                "bash",
+                {"command": "git push origin main"},
+                session.workdir,
+                request_tool_approval=deny_with_wrong_key,
+            )
+        )
+
+    audit = _read_audit_lines(session.transcript_path)
+    assert len(audit) == 1
+    content = audit[0].content or ""
+    assert 'command="git push origin main"' in content
+    assert "something_else_entirely" not in content

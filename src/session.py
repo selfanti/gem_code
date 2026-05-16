@@ -999,14 +999,20 @@ class Session:
                 )
             )
 
-        if decision.audit_category is None and audit_category is not None:
-            decision = PermissionDecision(
-                decision=decision.decision,
-                reason=decision.reason,
-                approval_key=decision.approval_key or approval_key,
-                visible_summary=decision.visible_summary,
-                audit_category=audit_category,
-            )
+        # AC-3.1 / AC-9: the gate canonicalizes `approval_key` and
+        # `audit_category` from the actual current invocation. We trust only
+        # the callback's `decision`, `reason`, and `visible_summary` — every
+        # downstream consumer (deny path, multiline downgrade, audit emit,
+        # `policy.record`) reads from the rebuilt decision so a misbehaving
+        # callback cannot persist a different command than the one it was
+        # asked to approve, nor write a misleading audit row.
+        decision = PermissionDecision(
+            decision=decision.decision,
+            reason=decision.reason,
+            approval_key=approval_key,
+            visible_summary=decision.visible_summary,
+            audit_category=audit_category,
+        )
 
         if decision.decision == "deny":
             raise _PermissionDenied(decision)
