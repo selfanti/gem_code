@@ -83,6 +83,12 @@ async def _run_once(instruction: str) -> int:
 
     try:
         config = load_config()
+        # AC-10: the Harbor / SWE-bench evaluation runner is unconditionally
+        # non-interactive. Force `auto_deny` so any tool the model emits that
+        # is not on the AC-1 default whitelist receives an immediate deny
+        # with `reason="non_interactive"` instead of hanging on a missing
+        # approval surface.
+        config.permission_mode = "auto_deny"
         session_manager = SessionManager(config)
         await session_manager.init()
         await session_manager.session.chat(

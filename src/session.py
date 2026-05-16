@@ -189,8 +189,14 @@ class Session:
             self._initialize_system_prompt(config.skills_dir)
         )
         if self.config.use_tool_search:
+            # The embedding model is heavy (loads a SentenceTransformer model
+            # from disk). We construct it eagerly so the first `chat()` does
+            # not pay the load cost, but we DEFER `tools_embeddings` to
+            # `_initialize_system_prompt` so the embedding map reflects the
+            # finalized tool list (built-in + skills + MCP), not just the
+            # bare `clone_tools()` baseline.
             self.embedding_model = SentenceTransformer("embedding_model")
-            self.tools_embeddings=build_tool_embedding(self.embedding_model,self._all_tools)
+            self.tools_embeddings = None
         else:
             self.embedding_model=None
             self.tools_embeddings=None
@@ -343,6 +349,24 @@ class Session:
             json.dumps(self._all_tools, ensure_ascii=False)
         )
         self._recalculate_context_usage()
+
+        # AC-7: snapshot the skills_dir fingerprint AFTER the skill list has
+        # been merged into `_all_tools`. This is the baseline the lazy
+        # rebuild path on subsequent `chat()` entries compares against. The
+        # constructor's `(0, 0)` placeholder would otherwise cause the first
+        # `chat()` to be a no-op even when the on-disk fingerprint changed
+        # between session construction and the first user message.
+        self._skills_dir_fingerprint = _compute_skills_fingerprint(skills_dir)
+
+        # AC-7: build embeddings now that built-in + skill + MCP tools are
+        # all merged. Building earlier (in `__init__`) would leave the first
+        # `search_tool()` call seeing a stale embedding map that knows only
+        # the built-in tools.
+        if self.config.use_tool_search and self.embedding_model is not None:
+            self.tools_embeddings = build_tool_embedding(
+                self.embedding_model,
+                self._all_tools,
+            )
 
     async def _init_mcp_client(self) -> None:
         """Initialize MCP and load tools declared by connected servers.
@@ -821,15 +845,17 @@ class Session:
 
             decision_for_audit: Optional[PermissionDecision] = None
             try:
-                gate_decision = await self._check_permission(
+                # The gate now lives inside `run_tool`. We still need to
+                # capture the denial decision here so the bound tool-reply
+                # carries the right reason and so the audit entry for the
+                # denial path is recorded on the same code path that emits
+                # the tool-message into `Session.history`.
+                result = await self.run_tool(
                     tool_name,
                     args,
+                    self.workdir,
                     request_tool_approval=request_tool_approval,
                 )
-                if gate_decision is not None:
-                    # Allowed by either the standing whitelist or the user.
-                    decision_for_audit = gate_decision
-                result = await self.run_tool(tool_name, args, self.workdir)
             except _PermissionDenied as denied:
                 decision_for_audit = denied.decision
                 # AC-4 protocol invariant: emit a `tool` reply bound to the
@@ -851,7 +877,9 @@ class Session:
             self._recalculate_context_usage()
 
             # AC-9 audit log. Transcript-only — `_emit_permission_audit` does
-            # NOT touch `self.history`.
+            # NOT touch `self.history`. For approved calls, `run_tool` already
+            # emitted the audit entry; we only need to emit here on the
+            # denial branch (where `run_tool` raised before logging).
             if decision_for_audit is not None:
                 self._emit_permission_audit(tool_name, decision_for_audit)
 
@@ -931,6 +959,19 @@ class Session:
 
         try:
             decision = await request_tool_approval(tool_name, args, context)
+        except asyncio.CancelledError:
+            # Approval-task cancellation (TUI shutdown, app teardown,
+            # parent task cancel) is a special case of "no decision" — we
+            # synthesize a deny so the bound tool reply still carries the
+            # right reason. Re-raising would let cancellation bubble out of
+            # the gate and skip the audit + denial-protocol path.
+            raise _PermissionDenied(
+                deny(
+                    "shutdown",
+                    approval_key=approval_key,
+                    audit_category=audit_category,
+                )
+            )
         except Exception as exc:
             raise _PermissionDenied(
                 deny(
@@ -962,7 +1003,20 @@ class Session:
             raise _PermissionDenied(decision)
 
         if decision.decision == "allow_session":
-            self.policy.record(tool_name, decision)
+            # Server-side defense in depth (DEC-7): multiline bash commands
+            # are `allow_once` only. Even if the front-end forgot to disable
+            # the "allow session" surface, the gate must downgrade the
+            # decision rather than persist a multiline approval.
+            if tool_name == "bash" and is_multiline:
+                decision = PermissionDecision(
+                    decision="allow_once",
+                    reason="multiline_bash_session_allow_downgraded",
+                    approval_key=decision.approval_key,
+                    visible_summary=decision.visible_summary,
+                    audit_category=decision.audit_category,
+                )
+            else:
+                self.policy.record(tool_name, decision)
 
         return decision
 
@@ -983,14 +1037,19 @@ class Session:
         """Lazy tool/embedding rebuild driven by `skills_dir` fingerprint."""
         skills_dir = self.config.skills_dir
         new_fingerprint = _compute_skills_fingerprint(skills_dir)
+        # If the baseline was not yet snapshotted (e.g. `chat()` is called
+        # without `await session.init()`), record it now and skip rebuild —
+        # `_initialize_system_prompt` already populates `_all_tools`.
+        if self._skills_dir_fingerprint is None:
+            self._skills_dir_fingerprint = new_fingerprint
+            return
         if new_fingerprint == self._skills_dir_fingerprint:
             return
 
-        if self._skills_dir_fingerprint is None:
-            # First chat() entry: lock in the baseline so we do not redo the
-            # work that `_initialize_system_prompt` already did.
-            self._skills_dir_fingerprint = new_fingerprint
-            return
+        # The baseline is set at the end of `_initialize_system_prompt` after
+        # skills + MCP are loaded. Any subsequent fingerprint mismatch on a
+        # `chat()` entry means the on-disk state actually changed, so we
+        # rebuild the tool list and the embedding map.
 
         rebuilt = clone_tools()
         if skills_dir:
@@ -1063,7 +1122,40 @@ class Session:
         self._recalculate_context_usage()
         return assistant_content
 
-    async def run_tool(self, name: str, args: Dict[str, Any], workdir: str) -> str:
+    async def run_tool(
+        self,
+        name: str,
+        args: Dict[str, Any],
+        workdir: str,
+        *,
+        request_tool_approval: Optional[ApprovalCallback] = None,
+    ) -> str:
+        # Permission gate is the FIRST action of run_tool() so any direct
+        # caller of `run_tool` (including future code paths or tests) flows
+        # through the chokepoint. `_handle_model_turn` is the only caller in
+        # tree today, but the chokepoint guarantee belongs here.
+        gate_decision = await self._check_permission(
+            name,
+            args,
+            request_tool_approval=request_tool_approval,
+        )
+        if gate_decision is not None:
+            # Whitelist passes return None; explicit user approvals (allow_once
+            # / allow_session) come back as a decision. Emit the audit entry
+            # for allow decisions immediately so the audit-log invariant
+            # (AC-9) is upheld even when the dispatch below later raises.
+            self._emit_permission_audit(name, gate_decision)
+        # Dispatch to the actual tool implementation. Kept as a separate
+        # method so tests can monkeypatch `_dispatch_tool` to fake tool
+        # execution while leaving the gate's chokepoint guarantee intact.
+        return await self._dispatch_tool(name, args, workdir)
+
+    async def _dispatch_tool(
+        self,
+        name: str,
+        args: Dict[str, Any],
+        workdir: str,
+    ) -> str:
         try:
             if name.startswith("skill__"):
                 skill_name = name.replace("skill__", "")

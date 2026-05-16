@@ -245,7 +245,7 @@ def test_audit_content_format_for_bash_includes_command_and_category() -> None:
     assert "allow_once" in line
     assert "bash" in line
     assert 'command="git status"' in line
-    assert "reason=user_choice" in line
+    assert 'reason="user_choice"' in line
     assert "audit_category=git" in line
 
 
@@ -257,7 +257,31 @@ def test_audit_content_format_for_non_bash_omits_command() -> None:
     )
     line = make_audit_content(decision, "write_file")
     assert "command=" not in line
-    assert "reason=callback_error: Boom" in line
+    assert 'reason="callback_error: Boom"' in line
+
+
+def test_audit_content_escapes_quotes_and_newlines() -> None:
+    """AC-9: audit lines round-trip through `json.loads` for command/reason fields.
+
+    Codex round-0 review flagged that quoted bash commands or multiline
+    payloads broke the audit JSONL line because the values were embedded
+    raw. JSON-encoding the fields preserves them faithfully.
+    """
+    decision = PermissionDecision(
+        decision="allow_once",
+        reason='quote " inside',
+        approval_key='echo "hi"\nls -la',
+        audit_category="echo",
+    )
+    line = make_audit_content(decision, "bash")
+    # The line should still parse: extract the value between `command=` and
+    # the next ` reason=` segment and decode it.
+    assert "command=" in line
+    cmd_chunk = line.split("command=", 1)[1].split(" reason=", 1)[0]
+    import json as _json
+    assert _json.loads(cmd_chunk) == 'echo "hi"\nls -la'
+    reason_chunk = line.split("reason=", 1)[1].split(" audit_category=", 1)[0]
+    assert _json.loads(reason_chunk) == 'quote " inside'
 
 
 def test_is_audit_content_recognizes_prefix() -> None:

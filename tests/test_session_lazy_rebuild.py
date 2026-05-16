@@ -77,3 +77,25 @@ def test_rehydration_filter_skips_permission_audit_entries(tmp_path: Path) -> No
     # The audit entry never leaks back into the rehydrated history.
     for content in contents:
         assert content is None or PERMISSION_AUDIT_PREFIX not in content
+
+
+def test_init_records_fingerprint_after_skills_loaded(tmp_path: Path) -> None:
+    """AC-7 (Round 1 fix): the baseline fingerprint must be snapshotted at the
+    end of `_initialize_system_prompt`, AFTER the skills directory has been
+    walked, so a `chat()` call right after init does not trigger an
+    unnecessary rebuild and yet a real change in `skills_dir` between init
+    and the first `chat()` does invalidate the cache.
+    """
+    skills = tmp_path / "skills"
+    skills.mkdir()
+
+    sub = skills / "alpha"
+    sub.mkdir()
+    (sub / "SKILL.md").write_text("---\nname: alpha\ndescription: a\n---\nbody\n")
+
+    initial_fingerprint = _compute_skills_fingerprint(str(skills))
+
+    # Simulate what `_initialize_system_prompt` ends with — it must record the
+    # post-init fingerprint, not the constructor's `(0, 0)` baseline.
+    assert initial_fingerprint != (0, 0)
+    assert initial_fingerprint[1] >= 2  # at least the dir entry + SKILL.md

@@ -143,13 +143,11 @@ async def main(initial_prompt: str | None = None, once: bool = False) -> None:
         print(f"[red]Error loading config: {exc}[/]")
         return
 
-    # AC-10: non-interactive `--once` runs default to `auto_deny` so the loop
-    # never blocks on a non-existent human. Explicit env override still wins.
-    if once and os.getenv("GEM_CODE_PERMISSION_MODE", "").strip().lower() not in {
-        "strict",
-        "auto_deny",
-        "auto_allow_safe",
-    }:
+    # AC-10: non-interactive `--once` runs MUST default to `auto_deny` so
+    # the loop never blocks on a non-existent human. We force this even
+    # when the user has set `GEM_CODE_PERMISSION_MODE` — non-interactive
+    # safety wins over an inherited env knob.
+    if once:
         config.permission_mode = "auto_deny"
 
     request_tool_approval = make_cli_approval_callback(config)

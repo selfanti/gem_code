@@ -154,12 +154,12 @@ def test_handle_model_turn_emits_tool_reply_for_each_denied_call(tmp_path: Path)
 
     captured_calls: List[str] = []
 
-    async def fake_run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
+    async def fake_dispatch(name: str, args: Dict[str, Any], workdir: str) -> str:
         # In the test the only allowed call is `read_file`; it just records.
         captured_calls.append(args.get("path", ""))
         return f"result-for-{args.get('path', '')}"
 
-    session.run_tool = fake_run_tool  # type: ignore[assignment]
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
 
     async def callback(tool_name, args, ctx):
         # Approve the first bash, deny the second.
@@ -208,10 +208,10 @@ def test_handle_model_turn_emits_tool_reply_for_each_denied_call(tmp_path: Path)
 def test_callback_exception_yields_deny_with_callback_error(tmp_path: Path) -> None:
     session = _make_session(tmp_path)
 
-    async def fake_run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
+    async def fake_dispatch(name: str, args: Dict[str, Any], workdir: str) -> str:
         return "ran"
 
-    session.run_tool = fake_run_tool  # type: ignore[assignment]
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
 
     async def boom(tool_name, args, ctx):
         raise RuntimeError("approval ui crashed")
@@ -244,11 +244,11 @@ def test_bash_session_allow_persists_for_normalized_command(tmp_path: Path) -> N
 
     invocations: List[str] = []
 
-    async def fake_run_tool(name: str, args: Dict[str, Any], workdir: str) -> str:
+    async def fake_dispatch(name: str, args: Dict[str, Any], workdir: str) -> str:
         invocations.append(args.get("command", ""))
         return "ok"
 
-    session.run_tool = fake_run_tool  # type: ignore[assignment]
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
 
     callback_calls: List[Tuple[str, Dict[str, Any]]] = []
 
@@ -310,10 +310,10 @@ def test_bash_session_allow_persists_for_normalized_command(tmp_path: Path) -> N
 def test_permission_audit_lands_in_jsonl_not_history(tmp_path: Path) -> None:
     session = _make_session(tmp_path)
 
-    async def fake_run_tool(name, args, workdir):
+    async def fake_dispatch(name, args, workdir):
         return "ran"
 
-    session.run_tool = fake_run_tool  # type: ignore[assignment]
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
 
     async def callback(tool_name, args, ctx):
         return PermissionDecision(
@@ -350,10 +350,10 @@ def test_permission_audit_lands_in_jsonl_not_history(tmp_path: Path) -> None:
 def test_auto_deny_skips_callback_and_emits_denial(tmp_path: Path) -> None:
     session = _make_session(tmp_path, permission_mode="auto_deny")
 
-    async def fake_run_tool(name, args, workdir):
+    async def fake_dispatch(name, args, workdir):
         return "should-not-happen"
 
-    session.run_tool = fake_run_tool  # type: ignore[assignment]
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
 
     callback_invocations: List[str] = []
 
@@ -383,10 +383,10 @@ def test_auto_deny_skips_callback_and_emits_denial(tmp_path: Path) -> None:
 def test_auto_allow_safe_runs_default_whitelist_silently(tmp_path: Path) -> None:
     session = _make_session(tmp_path, permission_mode="auto_allow_safe")
 
-    async def fake_run_tool(name, args, workdir):
+    async def fake_dispatch(name, args, workdir):
         return f"ran:{name}"
 
-    session.run_tool = fake_run_tool  # type: ignore[assignment]
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
 
     async def callback(tool_name, args, ctx):
         raise AssertionError("auto_allow_safe must not call the approval callback")
@@ -435,3 +435,156 @@ def test_clear_history_resets_policy_to_defaults(tmp_path: Path) -> None:
 
     assert not session.policy.is_whitelisted("write_file", {})
     assert not session.policy.is_whitelisted("bash", {"command": "git status"})
+
+
+# -- Round 1: gate chokepoint must live INSIDE run_tool ----------------------
+
+
+def test_run_tool_invokes_gate_directly(tmp_path: Path) -> None:
+    """AC-2 / AC-3.3: any direct caller of `Session.run_tool` MUST flow through
+    the permission gate. The gate-call side-effect (calling _check_permission)
+    happens before dispatch.
+    """
+    session = _make_session(tmp_path)
+
+    dispatch_calls: List[str] = []
+
+    async def fake_dispatch(name: str, args: Dict[str, Any], workdir: str) -> str:
+        dispatch_calls.append(name)
+        return "dispatched"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    callback_calls: List[str] = []
+
+    async def callback(tool_name, args, ctx):
+        callback_calls.append(tool_name)
+        return PermissionDecision(
+            decision="allow_once",
+            reason="user_choice",
+            approval_key=ctx["approval_key"],
+        )
+
+    # Calling `run_tool` directly (not via `_handle_model_turn`) must still
+    # consult the gate.
+    result = asyncio.run(
+        session.run_tool(
+            "bash",
+            {"command": "ls"},
+            session.workdir,
+            request_tool_approval=callback,
+        )
+    )
+    assert result == "dispatched"
+    assert callback_calls == ["bash"]
+    assert dispatch_calls == ["bash"]
+
+
+def test_run_tool_denial_raises_permission_denied_sentinel(tmp_path: Path) -> None:
+    """AC-4: `run_tool` raises `_PermissionDenied` (caught by callers) when
+    the user denies the call. Tests that direct callers see the sentinel
+    rather than a substituted plain return string.
+    """
+    from src.session import _PermissionDenied
+
+    session = _make_session(tmp_path)
+
+    async def fake_dispatch(name, args, workdir):
+        return "should_not_reach_here"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    async def callback(tool_name, args, ctx):
+        return PermissionDecision(
+            decision="deny",
+            reason="user_choice",
+            approval_key=ctx["approval_key"],
+        )
+
+    with pytest.raises(_PermissionDenied) as caught:
+        asyncio.run(
+            session.run_tool(
+                "bash",
+                {"command": "rm -rf /"},
+                session.workdir,
+                request_tool_approval=callback,
+            )
+        )
+    assert caught.value.decision.decision == "deny"
+    assert caught.value.decision.reason == "user_choice"
+
+
+# -- Round 1: cancellation in the approval path -> deny with reason=shutdown -
+
+
+def test_callback_cancellation_resolves_to_shutdown_deny(tmp_path: Path) -> None:
+    """AC-2: if the approval task is cancelled (TUI shutdown, app teardown,
+    parent task cancellation), the gate synthesizes a deny with
+    `reason='shutdown'` instead of letting CancelledError bubble out.
+    """
+    from src.session import _PermissionDenied
+
+    session = _make_session(tmp_path)
+
+    async def fake_dispatch(name, args, workdir):
+        return "should_not_reach_here"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    async def cancelled_callback(tool_name, args, ctx):
+        raise asyncio.CancelledError()
+
+    with pytest.raises(_PermissionDenied) as caught:
+        asyncio.run(
+            session.run_tool(
+                "bash",
+                {"command": "git status"},
+                session.workdir,
+                request_tool_approval=cancelled_callback,
+            )
+        )
+    assert caught.value.decision.decision == "deny"
+    assert caught.value.decision.reason == "shutdown"
+
+
+# -- Round 1: multiline bash allow_session is rejected at the gate -----------
+
+
+def test_allow_session_for_multiline_bash_is_downgraded_at_gate(tmp_path: Path) -> None:
+    """AC-3.1: even if the front-end returns `allow_session` for a multiline
+    bash command, the gate downgrades to `allow_once` and never persists the
+    multiline approval into the session whitelist (DEC-7).
+    """
+    session = _make_session(tmp_path)
+
+    async def fake_dispatch(name, args, workdir):
+        return "ran"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    async def misbehaving_callback(tool_name, args, ctx):
+        # Return `allow_session` for a multiline command — the front-end
+        # surfaces should have prevented this, but we test gate's defense
+        # in depth.
+        return PermissionDecision(
+            decision="allow_session",
+            reason="user_choice",
+            approval_key=ctx["approval_key"],
+        )
+
+    asyncio.run(
+        session.run_tool(
+            "bash",
+            {"command": "git status\nls -la"},
+            session.workdir,
+            request_tool_approval=misbehaving_callback,
+        )
+    )
+
+    # The session whitelist must NOT contain the multiline command.
+    assert session.policy.bash_session_allows == set()
+    # And the audit log records the gate's downgrade reason.
+    audit = _read_audit_lines(session.transcript_path)
+    assert len(audit) == 1
+    assert "allow_once" in (audit[0].content or "")
+    assert "multiline_bash_session_allow_downgraded" in (audit[0].content or "")

@@ -133,3 +133,72 @@ def _async_input(reply: str):
         return reply
 
     return _stub
+
+
+# -- Round 1: --once must force auto_deny even if env says otherwise ---------
+
+
+def test_cli_main_once_forces_auto_deny_over_env(monkeypatch, tmp_path) -> None:
+    """AC-10: `--once` must force `permission_mode=auto_deny` even if the
+    user has set GEM_CODE_PERMISSION_MODE to something else.
+    """
+    captured: Dict[str, Any] = {}
+
+    class FakeSessionManager:
+        def __init__(self, config):
+            captured["config"] = config
+
+        async def init(self):
+            return None
+
+        @property
+        def session(self):
+            class _Session:
+                async def chat(self_inner, *a, **kw):
+                    return None
+
+                async def cleanup(self_inner):
+                    return None
+
+            return _Session()
+
+    def fake_load_config():
+        from src.config import Config
+        from src.security import SecuritySettings
+
+        return Config(
+            api_key="k",
+            base_url="https://example.invalid",
+            model="m",
+            workdir=str(tmp_path),
+            skills_dir=None,
+            mcp_config_path=None,
+            memory_compaction_path=str(tmp_path / ".memory"),
+            api_mode="chat_completions",
+            security=SecuritySettings(
+                enabled=False,
+                best_effort=True,
+                allow_network=False,
+                allow_abstract_unix=False,
+                allow_signals=False,
+                connect_ports=(),
+                bind_ports=(),
+                extra_read_paths=(),
+                extra_write_paths=(),
+                extra_execute_paths=(),
+            ),
+            use_tool_search=False,
+            permission_mode="strict",
+        )
+
+    import src.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "load_config", fake_load_config)
+    monkeypatch.setattr(cli_module, "SessionManager", FakeSessionManager)
+    # Pretend the user explicitly set strict via env. AC-10 requires the
+    # `--once` non-interactive default to win regardless.
+    monkeypatch.setenv("GEM_CODE_PERMISSION_MODE", "strict")
+
+    asyncio.run(cli_module.main(initial_prompt="do thing", once=True))
+
+    assert captured["config"].permission_mode == "auto_deny"

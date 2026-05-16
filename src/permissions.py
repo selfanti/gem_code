@@ -16,6 +16,7 @@ Three pieces live here:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -157,13 +158,20 @@ def make_audit_content(decision: PermissionDecision, tool_name: str) -> str:
     """Render a `PermissionDecision` into the audit-log string format.
 
     Format (see plan AC-9):
-      `[permission] <decision> <tool>[ command="<key>"] reason=<reason>[ audit_category=<cat>]`
+      `[permission] <decision> <tool>[ command=<json-quoted-key>] reason=<json-quoted-reason>[ audit_category=<cat>]`
+
+    `approval_key` and `reason` are JSON-encoded so commands containing
+    quotes, backslashes, newlines, or tabs round-trip safely. Downstream
+    parsers can `json.loads` the value of each `key=...` field. The
+    `[permission]` prefix and the audit-only `audit_category` token are
+    plain strings because they are constrained to a small bash-token-like
+    alphabet (the parser refuses anything containing shell control chars
+    by classifying it as `unknown`).
     """
     parts = [PERMISSION_AUDIT_PREFIX, decision.decision, tool_name]
     if tool_name == "bash" and decision.approval_key:
-        # Quote the command verbatim; the approval key is already normalized.
-        parts.append(f'command="{decision.approval_key}"')
-    parts.append(f"reason={decision.reason}")
+        parts.append(f"command={json.dumps(decision.approval_key, ensure_ascii=False)}")
+    parts.append(f"reason={json.dumps(decision.reason, ensure_ascii=False)}")
     if decision.audit_category:
         parts.append(f"audit_category={decision.audit_category}")
     return " ".join(parts)
