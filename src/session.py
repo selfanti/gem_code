@@ -104,12 +104,15 @@ class _PermissionDenied(Exception):
 
     Carrying a structured `PermissionDecision` lets `_handle_model_turn`
     construct the bound `tool` reply and emit the audit entry without having
-    to re-derive context.
+    to re-derive context. The `audit_emitted` flag tells `_handle_model_turn`
+    whether `run_tool` already wrote the `[permission]` audit line so the
+    same denial is not double-logged on the JSONL transcript (AC-9).
     """
 
-    def __init__(self, decision: PermissionDecision) -> None:
+    def __init__(self, decision: PermissionDecision, *, audit_emitted: bool = False) -> None:
         super().__init__(decision.reason)
         self.decision = decision
+        self.audit_emitted = audit_emitted
 
 
 def _compute_skills_fingerprint(skills_dir: Optional[str]) -> tuple[int, int]:
@@ -844,6 +847,7 @@ class Session:
                 console.print(f"🛠️  Executing tool: {tool_name}")
 
             decision_for_audit: Optional[PermissionDecision] = None
+            audit_already_emitted = False
             try:
                 # The gate now lives inside `run_tool`. We still need to
                 # capture the denial decision here so the bound tool-reply
@@ -858,6 +862,7 @@ class Session:
                 )
             except _PermissionDenied as denied:
                 decision_for_audit = denied.decision
+                audit_already_emitted = denied.audit_emitted
                 # AC-4 protocol invariant: emit a `tool` reply bound to the
                 # original `tool_call_id` so the next API request stays valid.
                 result = f"<user_denied: {denied.decision.reason}>"
@@ -878,9 +883,11 @@ class Session:
 
             # AC-9 audit log. Transcript-only — `_emit_permission_audit` does
             # NOT touch `self.history`. For approved calls, `run_tool` already
-            # emitted the audit entry; we only need to emit here on the
-            # denial branch (where `run_tool` raised before logging).
-            if decision_for_audit is not None:
+            # emitted the audit entry. For denied calls, `run_tool` ALSO
+            # emits the audit entry now (the chokepoint guarantee), and sets
+            # `audit_already_emitted=True` on the sentinel so we do not write
+            # a duplicate row here.
+            if decision_for_audit is not None and not audit_already_emitted:
                 self._emit_permission_audit(tool_name, decision_for_audit)
 
         if not on_tool_start and not on_tool_result:
@@ -904,10 +911,12 @@ class Session:
         The function never mutates `Session.history` — predictions land in the
         model's own visible turn (AC-5.3) and audit entries go through
         `_emit_permission_audit`, which writes only to the JSONL transcript.
-        """
-        if not self.config.permission_gate_enabled:
-            return None
 
+        Per the v1 plan, `Config.permission_gate_enabled` is a RESERVED field.
+        We deliberately do NOT honor it as a kill-switch — disabling the
+        chokepoint at runtime would defeat the AC-1/AC-2 invariants. The
+        field is forced to True in `load_config()` and ignored here.
+        """
         if self.policy.is_whitelisted(tool_name, args):
             return None
 
@@ -1134,11 +1143,19 @@ class Session:
         # caller of `run_tool` (including future code paths or tests) flows
         # through the chokepoint. `_handle_model_turn` is the only caller in
         # tree today, but the chokepoint guarantee belongs here.
-        gate_decision = await self._check_permission(
-            name,
-            args,
-            request_tool_approval=request_tool_approval,
-        )
+        try:
+            gate_decision = await self._check_permission(
+                name,
+                args,
+                request_tool_approval=request_tool_approval,
+            )
+        except _PermissionDenied as denied:
+            # AC-9: emit the audit entry for denials at the chokepoint so
+            # direct callers of `run_tool` (not just `_handle_model_turn`)
+            # produce exactly one `[permission]` JSONL line per decision.
+            # Mark the sentinel so `_handle_model_turn` does not double-log.
+            self._emit_permission_audit(name, denied.decision)
+            raise _PermissionDenied(denied.decision, audit_emitted=True) from denied
         if gate_decision is not None:
             # Whitelist passes return None; explicit user approvals (allow_once
             # / allow_session) come back as a decision. Emit the audit entry

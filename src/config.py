@@ -95,7 +95,13 @@ def load_config() -> Config:
         api_mode=api_mode,
         security=security,
         use_tool_search=os.getenv("USE_TOOL_SEARCH", "false").lower() == "true",
-        permission_gate_enabled=_parse_bool_env("GEM_CODE_PERMISSION_GATE_ENABLED", True),
+        # `permission_gate_enabled` is RESERVED in v1 (per the original plan)
+        # and intentionally hard-coded to True here so a stray env var or a
+        # misplaced .env line cannot disable the chokepoint and silently
+        # bypass approval for `bash`, `write_file`, `fetch_url`, or any
+        # `mcp__*` tool. The dataclass field exists for ABI compatibility;
+        # `_check_permission` ignores it.
+        permission_gate_enabled=True,
         predict_before_call_enabled=_parse_bool_env("GEM_CODE_PREDICT_BEFORE_CALL", False),
         self_discovery_enabled=_parse_bool_env("GEM_CODE_SELF_DISCOVERY", False),
         permission_mode=policy_mode_from_env(default="strict"),

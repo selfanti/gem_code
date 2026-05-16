@@ -588,3 +588,143 @@ def test_allow_session_for_multiline_bash_is_downgraded_at_gate(tmp_path: Path) 
     assert len(audit) == 1
     assert "allow_once" in (audit[0].content or "")
     assert "multiline_bash_session_allow_downgraded" in (audit[0].content or "")
+
+
+# -- Round 2: gate is always-on in v1 (config field is reserved) -------------
+
+
+def test_gate_runs_even_when_config_field_says_disabled(tmp_path: Path) -> None:
+    """AC-1 / AC-2: `permission_gate_enabled` is RESERVED in v1; even a
+    hand-constructed Config with the field set to False must NOT bypass the
+    gate. _check_permission ignores the field; load_config() forces it True
+    so .env / shell env cannot override.
+    """
+    from src.session import _PermissionDenied
+
+    session = _make_session(tmp_path)
+    # Forcibly flip the field on an already-constructed session — proves
+    # _check_permission does not consult it.
+    session.config.permission_gate_enabled = False  # type: ignore[misc]
+
+    callback_calls: List[str] = []
+
+    async def callback(tool_name, args, ctx):
+        callback_calls.append(tool_name)
+        return PermissionDecision(
+            decision="allow_once",
+            reason="user_choice",
+            approval_key=ctx["approval_key"],
+        )
+
+    async def fake_dispatch(name, args, workdir):
+        return "ran"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    asyncio.run(
+        session.run_tool(
+            "bash",
+            {"command": "ls"},
+            session.workdir,
+            request_tool_approval=callback,
+        )
+    )
+    # The callback was still consulted — the field did not bypass the gate.
+    assert callback_calls == ["bash"]
+
+
+def test_gate_runs_even_when_env_says_disabled(monkeypatch, tmp_path) -> None:
+    """AC-1 / AC-2: GEM_CODE_PERMISSION_GATE_ENABLED=false in env MUST NOT
+    bypass the gate. load_config() ignores the env value and pins the field
+    to True.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.minimaxi.com/v1")
+    monkeypatch.setenv("WORKDIR", str(tmp_path))
+    monkeypatch.setenv("GEM_CODE_PERMISSION_GATE_ENABLED", "false")
+    monkeypatch.chdir(tmp_path)
+
+    from src.config import load_config
+
+    config = load_config()
+    assert config.permission_gate_enabled is True
+
+
+def test_direct_run_tool_denial_writes_exactly_one_audit_entry(tmp_path: Path) -> None:
+    """AC-9: a denied direct `Session.run_tool()` call must emit exactly one
+    `[permission] deny ...` JSONL audit entry. The chokepoint owns the audit
+    write so direct callers are not silently un-audited.
+    """
+    from src.session import _PermissionDenied
+
+    session = _make_session(tmp_path)
+
+    async def fake_dispatch(name, args, workdir):
+        return "should_not_reach_here"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    async def deny_callback(tool_name, args, ctx):
+        return PermissionDecision(
+            decision="deny",
+            reason="user_choice",
+            approval_key=ctx["approval_key"],
+        )
+
+    with pytest.raises(_PermissionDenied) as caught:
+        asyncio.run(
+            session.run_tool(
+                "bash",
+                {"command": "rm -rf /"},
+                session.workdir,
+                request_tool_approval=deny_callback,
+            )
+        )
+    assert caught.value.decision.decision == "deny"
+    assert caught.value.audit_emitted is True
+
+    audit = _read_audit_lines(session.transcript_path)
+    assert len(audit) == 1
+    assert "deny" in (audit[0].content or "")
+
+
+def test_handle_model_turn_denial_writes_exactly_one_audit_entry(tmp_path: Path) -> None:
+    """AC-9 dedupe: when the denial flows through both run_tool and
+    _handle_model_turn, the chokepoint emits the audit entry and the outer
+    handler skips its emit. Exactly one row, not two.
+    """
+    session = _make_session(tmp_path)
+
+    async def fake_dispatch(name, args, workdir):
+        return "should_not_reach_here"
+
+    session._dispatch_tool = fake_dispatch  # type: ignore[assignment]
+
+    async def callback(tool_name, args, ctx):
+        return PermissionDecision(
+            decision="deny",
+            reason="user_choice",
+            approval_key=ctx["approval_key"],
+        )
+
+    asyncio.run(session._handle_model_turn(
+        content_buffer="",
+        reasoning_buffer="",
+        has_tool_calls=True,
+        tool_calls=[_toolcall("c1", "bash", {"command": "rm -rf /"})],
+        user_prompt="x",
+        on_turn_end=None,
+        on_tool_start=None,
+        on_tool_result=None,
+        request_tool_approval=callback,
+    ))
+
+    audit = _read_audit_lines(session.transcript_path)
+    assert len(audit) == 1, f"expected exactly one audit row, got {len(audit)}"
+    assert "deny" in (audit[0].content or "")
+
+    # The bound tool reply is still emitted on Session.history (AC-4).
+    tool_replies = [m for m in session.history if m.role == "tool"]
+    assert len(tool_replies) == 1
+    assert tool_replies[0].tool_call_id == "c1"
+    assert "<user_denied:" in (tool_replies[0].content or "")
