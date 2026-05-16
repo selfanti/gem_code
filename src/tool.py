@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Final, List, Optional
 from sentence_transformers import SentenceTransformer
-import aiofiles
 from rich.console import Console
 from trafilatura import extract, fetch_url
 import numpy as np
@@ -412,8 +411,11 @@ async def run_read_file(
         raise ValueError("start_line must be less than or equal to end_line")
 
     file_path = _resolve_path_in_workdir(workdir, path)
-    async with aiofiles.open(file_path, "r", encoding="utf-8") as handle:
-        content = await handle.read()
+    # Use a worker thread for the actual I/O instead of `aiofiles.open()`.
+    # `aiofiles` was observed to hang for line-range reads inside Codex's
+    # sandbox; `asyncio.to_thread(Path.read_text)` is deterministic across
+    # filesystems and lets pytest hit a real timeout cleanly.
+    content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
 
     if start_line is None and end_line is None:
         return content
@@ -446,8 +448,10 @@ async def run_read_file(
 async def run_write_file(path: str, content: str, workdir: str) -> str:
     file_path = _resolve_path_in_workdir(workdir, path, allow_create=True)
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    async with aiofiles.open(file_path, "w", encoding="utf-8") as handle:
-        await handle.write(content)
+    # `Path.write_text` plus `asyncio.to_thread` is deterministic where
+    # `aiofiles.open()` hangs in Codex's sandbox. Behaviour is otherwise
+    # identical: write the full content, return the success summary.
+    await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
     return f"Successfully wrote {len(content)} characters to {file_path}"
 
 
@@ -459,8 +463,7 @@ async def run_str_replace_file(path: str, edits: List[Dict[str, str]], workdir: 
     """
 
     file_path = _resolve_path_in_workdir(workdir, path)
-    async with aiofiles.open(file_path, "r", encoding="utf-8") as handle:
-        content = await handle.read()
+    content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
 
     for edit in edits:
         target = edit.get("target", "")
@@ -469,8 +472,7 @@ async def run_str_replace_file(path: str, edits: List[Dict[str, str]], workdir: 
             raise ValueError(f"Target text not found in {file_path}: {target!r}")
         content = content.replace(target, replacement, 1)
 
-    async with aiofiles.open(file_path, "w", encoding="utf-8") as handle:
-        await handle.write(content)
+    await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
 
     return f"Successfully applied {len(edits)} replacement(s) to {file_path}"
 
