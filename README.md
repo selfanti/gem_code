@@ -86,6 +86,8 @@ OPENAI_API_MODE=auto
 
 3. 确保 Docker 可用。SWE-bench Verified 和 Terminal-Bench 都是容器化任务，首次运行会拉取/构建镜像，耗时较长。
 
+4. 如果要让 Harbor 非交互评测真正执行 `bash`、`write_file`、`StrReplaceFile`、`fetch_url` 等工具，需要在 `src/permissions.py` 中手动切换测试白名单：注释掉当前的 `DEFAULT_WHITELIST_NAMES = frozenset({"read_file", "Glob", "Grep"})`，并取消注释下方的 Harbor benchmark override 全工具白名单。否则 `evaluation/run_gem_code_once.py` 会使用非交互权限模式，默认拒绝初始白名单之外的工具调用。
+
 ### 本地 smoke matrix
 
 用于快速回归 gem-code 的 Harbor adapter、上下文管理、TUI/CLI 启动保护等本项目自身行为，不是正式公开 benchmark：
